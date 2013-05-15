@@ -6,7 +6,7 @@
 %%% @end
 %%% Created :  8 May 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%-------------------------------------------------------------------
-{application, cache_tab,
+{application, p1_cache_tab,
  [{description,  "Cache tables"},
   {vsn,          "0.1.0"},
   {modules,      []},
