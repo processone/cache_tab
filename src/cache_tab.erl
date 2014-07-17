@@ -40,7 +40,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--record(state, {tab = cache_tab_treap:empty(),
+-record(state, {tab = treap:empty(),
 		name,
 		size = 0,
 		owner,
@@ -189,7 +189,7 @@ init([Tab, Opts, N, Pid]) ->
 
 handle_call({lookup, Key, F}, _From, #state{tab = T} = State) ->
     CleanPrio = clean_priority(State#state.life_time),
-    case cache_tab_treap:lookup(Key, T) of
+    case treap:lookup(Key, T) of
 	{ok, Prio, Val} when (State#state.lru == true) or (Prio =< CleanPrio) ->
 	    Hits = State#state.hits,
 	    NewState = treap_update(Key, Val, State#state{hits = Hits + 1}),
@@ -221,7 +221,7 @@ handle_call({lookup, Key, F}, _From, #state{tab = T} = State) ->
     end;
 handle_call({cache_lookup, Key}, _From, #state{tab = T} = State) ->
     CleanPrio = clean_priority(State#state.life_time),
-    case cache_tab_treap:lookup(Key, T) of
+    case treap:lookup(Key, T) of
 	{ok, Prio, Val} when (State#state.lru == true) or (Prio =< CleanPrio) ->
 	    Hits = State#state.hits,
 	    NewState = treap_update(Key, Val, State#state{hits = Hits + 1}),
@@ -232,7 +232,7 @@ handle_call({cache_lookup, Key}, _From, #state{tab = T} = State) ->
 	    {reply, error, NewState}
     end;
 handle_call({insert, Key, Val, F}, _From, #state{tab = T} = State) ->
-    case cache_tab_treap:lookup(Key, T) of
+    case treap:lookup(Key, T) of
 	{ok, _Prio, Val} ->
 	    {reply, ok, treap_update(Key, Val, State)};
 	_ ->
@@ -283,7 +283,7 @@ handle_call({info, Info}, _From, State) ->
 	  end,
     {reply, Res, State};
 handle_call(tab2list, _From, #state{tab = T} = State) ->
-    Res = cache_tab_treap:fold(
+    Res = treap:fold(
 	    fun({Key, _, Val}, Acc) ->
 		    [{Key, Val}|Acc]
 	    end, [], T),
@@ -410,7 +410,7 @@ clean_priority(LifeTime) ->
 treap_update(Key, Val, #state{tab = T, lru = LRU} = State) ->
     if LRU ->
 	    Priority = now_priority(),
-	    NewT = cache_tab_treap:insert(Key, Priority, Val, T),
+	    NewT = treap:insert(Key, Priority, Val, T),
 	    State#state{tab = NewT};
        true ->
 	    State
@@ -420,21 +420,21 @@ treap_insert(Key, Val, State) ->
     State1 = clean_treap(State),
     #state{size = Size} = State2 = shrink_treap(State1),
     T = State2#state.tab,
-    case cache_tab_treap:lookup(Key, T) of
+    case treap:lookup(Key, T) of
 	{ok, _, Val} ->
 	    treap_update(Key, Val, State2);
 	{ok, _, _} ->
-	    NewT = cache_tab_treap:insert(Key, now_priority(), Val, T),
+	    NewT = treap:insert(Key, now_priority(), Val, T),
 	    State2#state{tab = NewT};
 	_ ->
-	    NewT = cache_tab_treap:insert(Key, now_priority(), Val, T),
+	    NewT = treap:insert(Key, now_priority(), Val, T),
 	    State2#state{tab = NewT, size = Size+1}
     end.
 
 treap_delete(Key, #state{tab = T, size = Size} = State) ->
-    case cache_tab_treap:lookup(Key, T) of
+    case treap:lookup(Key, T) of
 	{ok, _, _} ->
-	    NewT = cache_tab_treap:delete(Key, T),	    
+	    NewT = treap:delete(Key, T),
 	    clean_treap(State#state{tab = NewT, size = Size-1});
 	_ ->
 	    State
@@ -450,13 +450,13 @@ clean_treap(#state{tab = T, size = Size, life_time = LifeTime} = State) ->
     end.
 
 clean_treap(Treap, CleanPriority, N) ->
-    case cache_tab_treap:is_empty(Treap) of
+    case treap:is_empty(Treap) of
         true ->
             {N, Treap};
         false ->
-            {_Key, Priority, _Value} = cache_tab_treap:get_root(Treap),
+            {_Key, Priority, _Value} = treap:get_root(Treap),
             if Priority > CleanPriority ->
-                    clean_treap(cache_tab_treap:delete_root(Treap), CleanPriority, N+1);
+                    clean_treap(treap:delete_root(Treap), CleanPriority, N+1);
 	       true ->
                     {N, Treap}
             end
@@ -495,11 +495,11 @@ shrink_treap(State) ->
 shrink_treap(T, ShrinkSize, ShrinkSize) ->
     {ShrinkSize, T};
 shrink_treap(T, ShrinkSize, N) ->
-    case cache_tab_treap:is_empty(T) of
+    case treap:is_empty(T) of
 	true ->
 	    {N, T};
 	false ->
-	    shrink_treap(cache_tab_treap:delete_root(T), ShrinkSize, N+1)
+	    shrink_treap(treap:delete_root(T), ShrinkSize, N+1)
     end.
 
 print_error(Operation, Args, Reason, State) ->
