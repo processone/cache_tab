@@ -34,7 +34,7 @@
 -export([start_link/4, new/2, delete/1, delete/3, lookup/3,
 	 insert/4, info/2, tab2list/1, setopts/2,
 	 dirty_lookup/3, dirty_insert/4, dirty_delete/3,
-	 all/0, test/0]).
+	 all/0, clean/1, test/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -94,6 +94,12 @@ new(Tab, Opts) ->
 	Err ->
 	    {error, Err}
     end.
+
+clean(Tab) ->
+    lists:foreach(
+      fun(Proc) ->
+	      ?GEN_SERVER:call(Proc, clean, ?CALL_TIMEOUT)
+      end, get_all_procs(Tab)).
 
 delete(Tab) ->
     lists:foreach(
@@ -290,6 +296,8 @@ handle_call(tab2list, _From, #state{tab = T} = State) ->
     {reply, Res, State};
 handle_call({setopts, Opts}, _From, State) ->
     {reply, ok, do_setopts(State, Opts)};
+handle_call(clean, _From, State) ->
+    {reply, ok, State#state{tab = treap:empty(), size = 0}};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
