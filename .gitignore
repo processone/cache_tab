@@ -1,0 +1,10 @@
+rebar
+ebin/
+.eunit
+_build
+.rebar/
+deps/
+
+*.eqc
+.eqc-info
+

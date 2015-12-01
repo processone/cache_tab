@@ -1,8 +1,9 @@
 %%%----------------------------------------------------------------------
-%%% File    : rebar.config
+%%% File    : cache_tab.app.src
 %%% Author  : Evgeniy Khramtsov <ekhramtsov@process-one.net>
-%%% Purpose : Rebar build script. Compliant with rebar and rebar3.
+%%% Purpose : Application package description
 %%% Created : 8 May 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
+%%%
 %%%
 %%% Copyright (C) 2002-2015 ProcessOne, SARL. All Rights Reserved.
 %%%
@@ -20,9 +21,19 @@
 %%%
 %%%----------------------------------------------------------------------
 
-{erl_opts, [debug_info]}.
+{application, cache_tab,
+ [{description,  "In-memory cache Erlang / Elixir library"},
+  {vsn,          "1.0.0"},
+  {modules,      []},
+  {registered,   []},
+  {applications, [kernel, stdlib]},
+  {mod,          {cache_tab_app,[]}},
 
-{deps, [{p1_utils, ".*", {git, "https://github.com/processone/p1_utils", {tag, "1.0.1"}}}]}.
+  %% hex.pm packaging:
+  {files, ["src/", "rebar.config", "rebar.config.script", "README.md", "LICENSE.txt"]},
+  {licenses, ["Apache 2.0"]},
+  {maintainers, ["ProcessOne"]},
+  {links, [{"Github", "https://github.com/processone/cache_tab"}]}]}.
 
 %% Local Variables:
 %% mode: erlang
