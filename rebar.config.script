@@ -72,7 +72,7 @@ Config = case os:getenv("TRAVIS") of
              _ ->
                  Cfg2
          end,
-
+io:format("Config: ~p", [Config]),
 Config.
 
 %% Local Variables:
