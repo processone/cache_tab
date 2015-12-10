@@ -67,8 +67,7 @@ Config = case os:getenv("TRAVIS") of
              "true" ->
                  JobId = os:getenv("TRAVIS_JOB_ID"),
                  Cfg3 = ModCfg(Cfg2, [deps], fun(V) -> [{coveralls, ".*", {git, "https://github.com/markusn/coveralls-erl.git", "master"}}|V] end, []),
-                 ModCfg(Cfg3, [post_hooks], fun(V) -> V ++ [{eunit, "echo '\n%%! -pa .eunit/ deps/coveralls/ebin\nmain(_)->{ok,F}=file:open(\"erlang.json\",[write]),io:fwrite(F,\"~s\",[coveralls:convert_file(\".eunit/cover.coverdata\", \""++JobId++"\", \"travis-ci\")]).' > getcover.erl"},
-                                                                   {eunit, "escript ./getcover.erl"}] end, []);
+                 lists:keystore(plugin_dir, 1, Cfg3, {plugin_dir, "deps/coveralls/src"});
              _ ->
                  Cfg2
          end,
