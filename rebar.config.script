@@ -70,7 +70,7 @@ Config = case os:getenv("TRAVIS") of
                  Cfg4 = ModCfg(Cfg3, [plugins], fun(V) -> V ++ [rebar_coveralls] end, []),
                  Cfg5 = lists:keystore(plugin_dir, 1, Cfg4, {plugin_dir, "deps/coveralls/src"}),
                  Cfg6 = lists:keystore(coveralls_coverdata, 1, Cfg5, {coveralls_coverdata, ".eunit/eunit.coverdata"}),
-                 lists:keystore(coveralls_service_name, "travis-ci");
+                 lists:keystore(coveralls_service_name, 1, Cfg6, {coveralls_service_name, "travis-ci"});
              _ ->
                  Cfg2
          end,
