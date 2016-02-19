@@ -31,7 +31,7 @@
 -export([start_link/4, new/2, delete/1, delete/3, lookup/3,
 	 insert/4, info/2, tab2list/1, setopts/2,
 	 dirty_lookup/3, dirty_insert/4, dirty_delete/3,
-	 all/0, clean/1, test/0]).
+	 all/0, clean/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -507,6 +507,8 @@ shrink_treap(T, ShrinkSize, N) ->
 	    shrink_treap(treap:delete_root(T), ShrinkSize, N+1)
     end.
 
+print_error(_Operation, _Args, _Reason, #state{warn = false}) ->
+    ok;
 print_error(Operation, Args, Reason, State) ->
     error_logger:error_msg(
       "callback failed:~n"
@@ -517,98 +519,3 @@ print_error(Operation, Args, Reason, State) ->
       "** Reason: ~p~n",
       [State#state.name, State#state.owner,
        Operation, Args, Reason]).
-
-%%--------------------------------------------------------------------
-%%% Tests
-%%--------------------------------------------------------------------
--define(lookup, dirty_lookup).
--define(delete, dirty_delete).
--define(insert, dirty_insert).
-%%-define(lookup, lookup).
-%%-define(delete, delete).
-%%-define(insert, insert).
-
-test() ->
-    LifeTime = 2,
-    ok = new(test_tbl, [{life_time, LifeTime}, {max_size, unlimited}]),
-    check([]),
-    ok = ?insert(test_tbl, "key", "value", fun() -> ok end),
-    check([{"key", "value"}]),
-    {ok, "value"} = ?lookup(test_tbl, "key", fun() -> error end),
-    check([{"key", "value"}]),
-    io:format("** waiting for ~p seconds to check if LRU works fine...~n",
-	      [LifeTime+1]),
-    timer:sleep(timer:seconds(LifeTime+1)),
-    ok = ?insert(test_tbl, "key1", "value1", fun() -> ok end),
-    check([{"key1", "value1"}]),
-    ok = ?delete(test_tbl, "key1", fun() -> ok end),
-    {ok, "value"} = ?lookup(test_tbl, "key", fun() -> {ok, "value"} end),
-    check([{"key", "value"}]),
-    ok = ?delete(test_tbl, "key", fun() -> ok end),
-    check([]),
-    %% io:format("** testing buggy callbacks...~n"),
-    %% delete(test_tbl, "key", fun() -> erlang:error(badarg) end),
-    %% insert(test_tbl, "key", "val", fun() -> erlang:error(badarg) end),
-    %% lookup(test_tbl, "key", fun() -> erlang:error(badarg) end),
-    check([]),
-    delete(test_tbl),
-    test1().
-
-test1() ->
-    MaxSize = 10,
-    ok = new(test_tbl, [{max_size, MaxSize}, {shrink_size, 1}, {warn, false}]),
-    lists:foreach(
-      fun(N) ->
-	      ok = ?insert(test_tbl, N, N, fun() -> ok end)
-      end, lists:seq(1, MaxSize*get_proc_num())),
-    {ok, MaxSize} = info(test_tbl, size),
-    delete(test_tbl),
-    test2().
-
-test2() ->
-    LifeTime = 2,
-    ok = new(test_tbl, [{life_time, LifeTime},
-			{max_size, unlimited},
-			{lru, false}]),
-    check([]),
-    ok = ?insert(test_tbl, "key", "value", fun() -> ok end),
-    {ok, "value"} = ?lookup(test_tbl, "key", fun() -> error end),
-    check([{"key", "value"}]),
-    io:format("** waiting for ~p seconds to check if non-LRU works fine...~n",
-	      [LifeTime+1]),
-    timer:sleep(timer:seconds(LifeTime+1)),
-    error = ?lookup(test_tbl, "key", fun() -> error end),
-    check([{"key", '$cached_mismatch'}]),
-    ok = ?insert(test_tbl, "key", "value1", fun() -> ok end),
-    check([{"key", "value1"}]),
-    delete(test_tbl),
-    io:format("** testing speed, this may take a while...~n"),
-    test3(1000),
-    test3(10000),
-    test3(100000),
-    test3(1000000).
-
-test3(Iter) ->
-    ok = new(test_tbl, [{max_size, unlimited}, {life_time, unlimited}]),
-    L = lists:seq(1, Iter),
-    T1 = now(),
-    lists:foreach(
-      fun(N) ->
-	      ok = ?insert(test_tbl, N, N, fun() -> ok end)
-      end, L),
-    io:format("** average insert (size = ~p): ~p usec~n",
-	      [Iter, round(timer:now_diff(now(), T1)/Iter)]),
-    T2 = now(),
-    lists:foreach(
-      fun(N) ->
-	      {ok, N} = ?lookup(test_tbl, N, fun() -> ok end)
-      end, L),
-    io:format("** average lookup (size = ~p): ~p usec~n",
-	      [Iter, round(timer:now_diff(now(), T2)/Iter)]),
-    {ok, Iter} = info(test_tbl, size),
-    delete(test_tbl).
-
-check(List) ->
-    Size = length(List),
-    {ok, Size} = info(test_tbl, size),
-    List = tab2list(test_tbl).
