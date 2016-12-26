@@ -30,7 +30,9 @@
 %% API
 -export([start_link/4, new/2, delete/1, delete/3, lookup/3,
 	 insert/4, info/2, tab2list/1, setopts/2,
-	 dirty_lookup/3, dirty_insert/4, dirty_delete/3,
+	 dirty_lookup/3,
+         dirty_insert/4, dirty_insert/3, dirty_dist_insert/4,
+         dirty_delete/3, dirty_delete/2, dirty_dist_delete/3,
 	 all/0, clean/1]).
 
 %% gen_server callbacks
@@ -114,6 +116,17 @@ dirty_delete(Tab, Key, F) ->
     ?GEN_SERVER:call(
        get_proc_by_hash(Tab, Key), {cache_delete, Key}, ?CALL_TIMEOUT).
 
+dirty_delete(Tab, Key) ->
+    ?GEN_SERVER:call(
+       get_proc_by_hash(Tab, Key), {cache_delete, Key}, ?CALL_TIMEOUT).
+
+dirty_dist_delete(Tab, Key, F) ->
+    F(),
+    rpc:eval_everywhere(
+      cache_tab_app:get_nodes() -- [node()],
+      ?MODULE, dirty_delete, [Tab, Key]),
+    dirty_delete(Tab, Key).
+
 lookup(Tab, Key, F) ->
     ?GEN_SERVER:call(
        get_proc_by_hash(Tab, Key), {lookup, Key, F}, ?CALL_TIMEOUT).
@@ -145,6 +158,17 @@ dirty_insert(Tab, Key, Val, F) ->
     F(),
     ?GEN_SERVER:call(
        get_proc_by_hash(Tab, Key), {cache_insert, Key, Val}, ?CALL_TIMEOUT).
+
+dirty_insert(Tab, Key, Val) ->
+    ?GEN_SERVER:call(
+       get_proc_by_hash(Tab, Key), {cache_insert, Key, Val}, ?CALL_TIMEOUT).
+
+dirty_dist_insert(Tab, Key, Val, F) ->
+    F(),
+    rpc:eval_everywhere(
+      cache_tab_app:get_nodes() -- [node()],
+      ?MODULE, dirty_insert, [Tab, Key, Val]),
+    dirty_insert(Tab, Key, Val).
 
 info(Tab, Info) ->
     case lists:map(
@@ -402,8 +426,7 @@ get_all_procs(Tab) ->
     [get_proc(Tab, N) || N <- lists:seq(1, get_proc_num())].
 
 now_priority() ->
-    {MSec, Sec, USec} = now(),
-    -((MSec*1000000 + Sec)*1000000 + USec).
+    -p1_time_compat:system_time(micro_seconds).
 
 clean_priority(LifeTime) ->
     if is_integer(LifeTime) ->

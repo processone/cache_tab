@@ -26,7 +26,9 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/2, stop/1, get_nodes/0]).
+
+-define(PG, cache_tab).
 
 %%%===================================================================
 %%% Application callbacks
@@ -51,6 +53,8 @@
 start(_StartType, _StartArgs) ->
     case cache_tab_sup:start_link() of
         {ok, Pid} ->
+            pg2:create(?PG),
+            pg2:join(?PG, Pid),
             {ok, Pid};
         Error ->
             Error
@@ -68,6 +72,9 @@ start(_StartType, _StartArgs) ->
 %%--------------------------------------------------------------------
 stop(_State) ->
     ok.
+
+get_nodes() ->
+    [node(P) || P <- pg2:get_members(?PG)].
 
 %%%===================================================================
 %%% Internal functions
