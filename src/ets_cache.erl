@@ -25,7 +25,8 @@
 
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
-	 lookup/3, clear/1, filter/2, all/0, info/1, info/2]).
+	 lookup/2, lookup/3, insert/3, insert/4, clear/1, filter/2,
+	 all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -36,6 +37,8 @@
 		cache_missed :: boolean(),
 		life_time :: milli_seconds() | infinity,
 		max_size :: pos_integer() | infinity}).
+
+-define(CALL_TIMEOUT, timer:minutes(1)).
 
 -type milli_seconds() :: pos_integer().
 -type option() :: {max_size, pos_integer() | infinity} |
@@ -95,7 +98,28 @@ delete(Name, Key, Nodes) ->
 	      end, Nodes)
     end.
 
--spec lookup(atom(), any(), read_fun()) -> {ok, any()} | error.
+-spec insert(atom(), any(), any()) -> ok.
+insert(Name, Key, Val) ->
+    insert(Name, Key, Val, [node()]).
+
+insert(Name, Key, Val, Nodes) ->
+    case whereis(Name) of
+	undefined -> ok;
+	_ ->
+	    lists:foreach(
+	      fun(Node) when Node /= node() ->
+		      send({Name, Node}, {insert, Key, {ok, Val}});
+		 (_MyNode) ->
+		      gen_server:call(Name, {insert, Key, {ok, Val}},
+				      ?CALL_TIMEOUT)
+	      end, Nodes)
+    end.
+
+-spec lookup(atom(), any()) -> {ok, any()} | error.
+lookup(Name, Key) ->
+    lookup(Name, Key, undefined).
+
+-spec lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | error.
 lookup(Name, Key, ReadFun) ->
     try ets:lookup(Name, Key) of
 	[{_, Val, ExpireTime}] ->
@@ -111,10 +135,14 @@ lookup(Name, Key, ReadFun) ->
 	    end;
 	[] ->
 	    do_lookup(Name, Key, ReadFun);
+	_ when ReadFun /= undefined ->
+	    ReadFun();
 	_ ->
-	    ReadFun()
-    catch _:badarg ->
-	    ReadFun()
+	    error
+    catch _:badarg when ReadFun /= undefined ->
+	    ReadFun();
+	  _:badarg ->
+	    error
     end.
 
 -spec clear(atom()) -> ok.
@@ -188,6 +216,9 @@ init([Name, Opts]) ->
 		life_time = LifeTime,
 		cache_missed = CacheMissed}}.
 
+handle_call({insert, Key, Val}, _From, State) ->
+    do_insert(State, Key, Val),
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -208,17 +239,13 @@ handle_info({insert, Ref, Key, error}, #state{cache_missed = false} = State) ->
 handle_info({insert, Ref, Key, Val}, #state{tab = Tab} = State) ->
     case ets:lookup(Tab, Key) of
 	[{_, Ref}] ->
-	    check_size(Tab, State#state.max_size),
-	    LifeTime = State#state.life_time,
-	    ExpireTime = if is_integer(LifeTime) ->
-				 current_time() + LifeTime;
-			    true ->
-				 LifeTime
-			 end,
-	    ets:insert(Tab, {Key, Val, ExpireTime});
+	    do_insert(State, Key, Val);
 	_ ->
 	    ok
     end,
+    {noreply, State};
+handle_info({insert, Key, Val}, State) ->
+    do_insert(State, Key, Val),
     {noreply, State};
 handle_info({delete, Key}, #state{tab = Tab} = State) ->
     ets:delete(Tab, Key),
@@ -269,14 +296,23 @@ do_filter(Name, FilterFun, CurrTime, Key) ->
     end,
     do_filter(Name, FilterFun, CurrTime, ets:next(Name, Key)).
 
--spec do_lookup(atom(), any(), read_fun()) -> {ok, any()} | error.
+-spec do_lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | error.
+do_lookup(_Name, _Key, undefined) ->
+    error;
 do_lookup(Name, Key, ReadFun) ->
     Ref = make_ref(),
     case ets:insert_new(Name, {Key, Ref}) of
 	true ->
 	    try
 		Val = ReadFun(),
-		send(Name, {insert, Ref, Key, Val}),
+		case Val of
+		    {ok, _} ->
+			send(Name, {insert, Ref, Key, Val});
+		    error ->
+			send(Name, {insert, Ref, Key, Val});
+		    _Other ->
+			ets:delete_object(Name, {Key, Ref})
+		end,
 		Val
 	    catch E:R ->
 		    catch ets:delete_object(Name, {Key, Ref}),
@@ -285,6 +321,18 @@ do_lookup(Name, Key, ReadFun) ->
 	false ->
 	    ReadFun()
     end.
+
+-spec do_insert(state(), any(), {ok, any()} | error) -> ok.
+do_insert(State, Key, Val) ->
+    check_size(State#state.tab, State#state.max_size),
+    LifeTime = State#state.life_time,
+    ExpireTime = if is_integer(LifeTime) ->
+			 current_time() + LifeTime;
+		    true ->
+			 LifeTime
+		 end,
+    ets:insert(State#state.tab, {Key, Val, ExpireTime}),
+    ok.
 
 -spec check_opts([option()]) -> [option()].
 check_opts(Opts) ->
