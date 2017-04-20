@@ -25,8 +25,8 @@
 
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
-	 lookup/2, lookup/3, insert/3, insert/4, clear/1, filter/2,
-	 all/0, info/1, info/2]).
+	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
+	 setopts/2, clear/1, filter/2, all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -113,6 +113,24 @@ insert(Name, Key, Val, Nodes) ->
 		      gen_server:call(Name, {insert, Key, {ok, Val}},
 				      ?CALL_TIMEOUT)
 	      end, Nodes)
+    end.
+
+-spec insert_new(atom(), any(), any()) -> boolean().
+insert_new(Name, Key, Val) ->
+    insert_new(Name, Key, Val, [node()]).
+
+insert_new(Name, Key, Val, Nodes) ->
+    case whereis(Name) of
+	undefined -> false;
+	_ ->
+	    lists:foldl(
+	      fun(Node, Result) when Node /= node() ->
+		      send({Name, Node}, {insert_new, Key, {ok, Val}}),
+		      Result;
+		 (_MyNode, _) ->
+		      gen_server:call(Name, {insert_new, Key, {ok, Val}},
+				      ?CALL_TIMEOUT)
+	      end, false, Nodes)
     end.
 
 -spec lookup(atom(), any()) -> {ok, any()} | error.
@@ -219,6 +237,8 @@ init([Name, Opts]) ->
 handle_call({insert, Key, Val}, _From, State) ->
     do_insert(State, Key, Val),
     {reply, ok, State};
+handle_call({insert_new, Key, Val}, _From, State) ->
+    {reply, do_insert_new(State, Key, Val), State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -246,6 +266,9 @@ handle_info({insert, Ref, Key, Val}, #state{tab = Tab} = State) ->
     {noreply, State};
 handle_info({insert, Key, Val}, State) ->
     do_insert(State, Key, Val),
+    {noreply, State};
+handle_info({insert_new, Key, Val}, State) ->
+    do_insert_new(State, Key, Val),
     {noreply, State};
 handle_info({delete, Key}, #state{tab = Tab} = State) ->
     ets:delete(Tab, Key),
@@ -333,6 +356,26 @@ do_insert(State, Key, Val) ->
 		 end,
     ets:insert(State#state.tab, {Key, Val, ExpireTime}),
     ok.
+
+-spec do_insert_new(state(), any(), {ok, any()} | error) -> boolean().
+do_insert_new(State, Key, Val) ->
+    Tab = State#state.tab,
+    LifeTime = State#state.life_time,
+    check_size(Tab, State#state.max_size),
+    if is_integer(LifeTime) ->
+	    CurrTime = current_time(),
+	    case ets:lookup(State#state.tab, Key) of
+		[{Key, Val, ExpireTime}] when ExpireTime > CurrTime ->
+		    ets:delete_object(Tab, {Key, Val, ExpireTime}),
+		    ets:insert_new(Tab, {Key, Val, LifeTime + CurrTime});
+		[] ->
+		    ets:insert_new(Tab, {Key, Val, LifeTime + CurrTime});
+		_ ->
+		    false
+	    end;
+       true ->
+	    ets:insert_new(Tab, {Key, Val, LifeTime})
+    end.
 
 -spec check_opts([option()]) -> [option()].
 check_opts(Opts) ->
