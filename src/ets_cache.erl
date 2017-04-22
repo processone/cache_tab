@@ -26,7 +26,7 @@
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
 	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
-	 setopts/2, clear/1, filter/2, all/0, info/1, info/2]).
+	 setopts/2, clear/1, clear/2, filter/2, all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
