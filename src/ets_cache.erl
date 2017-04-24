@@ -3,21 +3,19 @@
 %%% Created : 12 Apr 2017 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% Copyright (C) 2002-2017 ProcessOne, SARL. All Rights Reserved.
 %%%
-%%% This program is free software; you can redistribute it and/or
-%%% modify it under the terms of the GNU General Public License as
-%%% published by the Free Software Foundation; either version 2 of the
-%%% License, or (at your option) any later version.
+%%% Licensed under the Apache License, Version 2.0 (the "License");
+%%% you may not use this file except in compliance with the License.
+%%% You may obtain a copy of the License at
 %%%
-%%% This program is distributed in the hope that it will be useful,
-%%% but WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-%%% General Public License for more details.
+%%%     http://www.apache.org/licenses/LICENSE-2.0
 %%%
-%%% You should have received a copy of the GNU General Public License along
-%%% with this program; if not, write to the Free Software Foundation, Inc.,
-%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+%%% Unless required by applicable law or agreed to in writing, software
+%%% distributed under the License is distributed on an "AS IS" BASIS,
+%%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%% See the License for the specific language governing permissions and
+%%% limitations under the License.
 %%%
 %%%-------------------------------------------------------------------
 -module(ets_cache).
@@ -33,10 +31,10 @@
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
--record(state, {tab :: atom(),
-		cache_missed :: boolean(),
-		life_time :: milli_seconds() | infinity,
-		max_size :: pos_integer() | infinity}).
+-record(state, {tab                     :: atom(),
+		cache_missed = true     :: boolean(),
+		life_time    = infinity :: milli_seconds() | infinity,
+		max_size     = infinity :: pos_integer() | infinity}).
 
 -define(CALL_TIMEOUT, timer:minutes(1)).
 
@@ -197,20 +195,26 @@ all() ->
 
 -spec info(atom()) -> [proplists:property()].
 info(Name) ->
-    ETSInfo = ets:info(Name),
-    State = sys:get_state(Name),
-    [{max_size, State#state.max_size},
-     {cache_missed, State#state.cache_missed},
-     {life_time, State#state.life_time}
-     |lists:filter(
-	fun({read_concurrency, _}) -> true;
-	   ({write_concurrency, _}) -> true;
-	   ({memory, _}) -> true;
-	   ({owner, _}) -> true;
-	   ({name, _}) -> true;
-	   ({size, _}) -> true;
-	   (_) -> false
-	end, ETSInfo)].
+    case ets:info(Name) of
+	undefined ->
+	    [];
+	ETSInfo ->
+	    {ok, MaxSize} = ets_cache_options:max_size(Name),
+	    {ok, CacheMissed} = ets_cache_options:cache_missed(Name),
+	    {ok, LifeTime} = ets_cache_options:life_time(Name),
+	    [{max_size, MaxSize},
+	     {cache_missed, CacheMissed},
+	     {life_time, LifeTime}
+	     |lists:filter(
+		fun({read_concurrency, _}) -> true;
+		   ({write_concurrency, _}) -> true;
+		   ({memory, _}) -> true;
+		   ({owner, _}) -> true;
+		   ({name, _}) -> true;
+		   ({size, _}) -> true;
+		   (_) -> false
+		end, ETSInfo)]
+    end.
 
 -spec info(atom(), atom()) -> any().
 info(Name, Option) ->
@@ -225,14 +229,9 @@ info(Name, Option) ->
 %%%===================================================================
 init([Name, Opts]) ->
     ets:new(Name, [named_table, public, {read_concurrency, true}]),
-    MaxSize = proplists:get_value(max_size, Opts, infinity),
-    CacheMissed = proplists:get_value(cache_missed, Opts, true),
-    LifeTime = proplists:get_value(life_time, Opts, infinity),
+    State = do_setopts(#state{tab = Name}, Opts),
     start_clean_timer(),
-    {ok, #state{tab = Name,
-		max_size = MaxSize,
-		life_time = LifeTime,
-		cache_missed = CacheMissed}}.
+    {ok, State}.
 
 handle_call({insert, Key, Val}, _From, State) ->
     do_insert(State, Key, Val),
@@ -244,12 +243,7 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 handle_cast({setopts, Opts}, State) ->
-    MaxSize = proplists:get_value(max_size, Opts, State#state.max_size),
-    CacheMissed = proplists:get_value(cache_missed, Opts, State#state.cache_missed),
-    LifeTime = proplists:get_value(life_time, Opts, State#state.life_time),
-    {noreply, State#state{max_size = MaxSize,
-			  life_time = LifeTime,
-			  cache_missed = CacheMissed}};
+    {noreply, do_setopts(State, Opts)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -390,6 +384,25 @@ check_opts(Opts) ->
 		  _ -> erlang:error({bad_option, Opt})
 	      end
       end, Opts).
+
+-spec do_setopts(state(), [option()]) -> state().
+do_setopts(State, Opts) ->
+    MaxSize = proplists:get_value(max_size, Opts, State#state.max_size),
+    LifeTime = proplists:get_value(life_time, Opts, State#state.life_time),
+    CacheMissed = proplists:get_value(cache_missed, Opts, State#state.cache_missed),
+    NewState = State#state{max_size = MaxSize,
+			   life_time = LifeTime,
+			   cache_missed = CacheMissed},
+    if State == NewState ->
+	    ok;
+       true ->
+	    Tab = State#state.tab,
+	    p1_options:insert(ets_cache_options, max_size, Tab, MaxSize),
+	    p1_options:insert(ets_cache_options, life_time, Tab, LifeTime),
+	    p1_options:insert(ets_cache_options, cache_missed, Tab, CacheMissed),
+	    p1_options:compile(ets_cache_options)
+    end,
+    NewState.
 
 -spec current_time() -> integer().
 current_time() ->

@@ -30,6 +30,8 @@
 
 -define(PG, cache_tab).
 
+-include("ets_cache.hrl").
+
 %%%===================================================================
 %%% Application callbacks
 %%%===================================================================
@@ -55,6 +57,8 @@ start(_StartType, _StartArgs) ->
         {ok, Pid} ->
             pg2:create(?PG),
             pg2:join(?PG, Pid),
+	    application:start(p1_utils),
+	    init_ets_cache_options(),
             {ok, Pid};
         Error ->
             Error
@@ -79,3 +83,8 @@ get_nodes() ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+init_ets_cache_options() ->
+    p1_options:start_link(ets_cache_options),
+    p1_options:insert(ets_cache_options, max_size, global, ?DEFAULT_MAX_SIZE),
+    p1_options:insert(ets_cache_options, life_time, global, ?DEFAULT_LIFE_TIME),
+    p1_options:insert(ets_cache_options, cache_missed, global, ?DEFAULT_CACHE_MISSED).
