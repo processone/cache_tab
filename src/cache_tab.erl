@@ -28,6 +28,7 @@
 -behaviour(?GEN_SERVER).
 
 %% API
+-export([start/0, stop/0]).
 -export([start_link/4, new/2, delete/1, delete/3, lookup/3,
 	 insert/4, info/2, tab2list/1, setopts/2,
 	 dirty_lookup/3,
@@ -66,6 +67,12 @@
 %%====================================================================
 %% API
 %%====================================================================
+start() ->
+    application:start(?MODULE).
+
+stop() ->
+    application:stop(?MODULE).
+
 start_link(Proc, Tab, Opts, Owner) ->
     ?GEN_SERVER:start_link(
       {local, Proc}, ?MODULE, [Tab, Opts, get_proc_num(), Owner], []).
