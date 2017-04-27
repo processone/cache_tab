@@ -23,26 +23,39 @@
 
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
-	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
-	 setopts/2, clear/1, clear/2, filter/2, all/0, info/1, info/2]).
+	 lookup/2, lookup/3, insert_new/3, insert_new/4,
+	 update/4, update/5, setopts/2, clear/1, clear/2,
+	 clean/1, clean/2, filter/2, all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
+%% Counters: for tests *only*, don't use them outside this module
+-export([new_counter/0, get_counter/1, incr_counter/1, delete_counter/1,
+	 new_counter_nif/0, get_counter_nif/1, incr_counter_nif/1,
+	 delete_counter_nif/1]).
+
+-on_load(load_nif/0).
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
 -record(state, {tab                     :: atom(),
+		clean_timer             :: reference(),
+		counter                 :: counter() | undefined,
 		cache_missed = true     :: boolean(),
 		life_time    = infinity :: milli_seconds() | infinity,
 		max_size     = infinity :: pos_integer() | infinity}).
 
--define(CALL_TIMEOUT, timer:minutes(1)).
+-define(DEFAULT_MAX_CACHE_TABLES, 1024).
+-define(IS_EXPIRED(Time, LifeTime, CurrTime),
+	(is_integer(LifeTime) andalso (Time + LifeTime =< CurrTime))).
 
+-type counter() :: non_neg_integer().
 -type milli_seconds() :: pos_integer().
 -type option() :: {max_size, pos_integer() | infinity} |
 		  {life_time, milli_seconds() | infinity} |
 		  {cache_missed, boolean()}.
 -type read_fun() :: fun(() -> {ok, any()} | error).
+-type update_fun() :: fun(() -> ok | any()).
 -type filter_fun() :: fun((any(), {ok, any()} | error) -> boolean()).
 -type state() :: #state{}.
 
@@ -60,12 +73,17 @@ new(Name) ->
 -spec new(atom(), [option()]) -> ok.
 new(Name, Opts) ->
     Opts1 = check_opts(Opts),
-    Spec = {Name, {?MODULE, start_link, [Name, Opts1]},
-	    transient, 5000, worker, [?MODULE]},
-    case supervisor:start_child(cache_tab_sup, Spec) of
-	{ok, _Pid} -> ok;
-	{error, {already_started, _}} -> setopts(Name, Opts1);
-	{error, Err} -> erlang:error(Err)
+    case whereis(Name) of
+	undefined ->
+	    Spec = {Name, {?MODULE, start_link, [Name, Opts1]},
+		    transient, 5000, worker, [?MODULE]},
+	    case supervisor:start_child(cache_tab_sup, Spec) of
+		{ok, _Pid} -> ok;
+		{error, {already_started, _}} -> setopts(Name, Opts1);
+		{error, Err} -> erlang:error(Err)
+	    end;
+	_ ->
+	    setopts(Name, Opts1)
     end.
 
 -spec setopts(atom(), [option()]) -> ok.
@@ -85,51 +103,35 @@ delete(Name, Key) ->
 
 -spec delete(atom(), any(), [atom()]) -> ok.
 delete(Name, Key, Nodes) ->
-    case whereis(Name) of
-	undefined -> ok;
-	_ ->
-	    lists:foreach(
-	      fun(Node) when Node /= node() ->
-		      send({Name, Node}, {delete, Key});
-		 (_MyNode) ->
-		      ets:delete(Name, Key)
-	      end, Nodes)
-    end.
+    lists:foreach(
+      fun(Node) when Node /= node() ->
+	      send({Name, Node}, {delete, Key});
+	 (_MyNode) ->
+	      ets_delete(Name, Key)
+      end, Nodes).
 
--spec insert(atom(), any(), any()) -> ok.
-insert(Name, Key, Val) ->
-    insert(Name, Key, Val, [node()]).
-
-insert(Name, Key, Val, Nodes) ->
-    case whereis(Name) of
-	undefined -> ok;
-	_ ->
-	    lists:foreach(
-	      fun(Node) when Node /= node() ->
-		      send({Name, Node}, {insert, Key, {ok, Val}});
-		 (_MyNode) ->
-		      gen_server:call(Name, {insert, Key, {ok, Val}},
-				      ?CALL_TIMEOUT)
-	      end, Nodes)
-    end.
-
--spec insert_new(atom(), any(), any()) -> boolean().
 insert_new(Name, Key, Val) ->
     insert_new(Name, Key, Val, [node()]).
 
 insert_new(Name, Key, Val, Nodes) ->
-    case whereis(Name) of
-	undefined -> false;
-	_ ->
-	    lists:foldl(
-	      fun(Node, Result) when Node /= node() ->
-		      send({Name, Node}, {insert_new, Key, {ok, Val}}),
-		      Result;
-		 (_MyNode, _) ->
-		      gen_server:call(Name, {insert_new, Key, {ok, Val}},
-				      ?CALL_TIMEOUT)
-	      end, false, Nodes)
-    end.
+    CurrTime = current_time(),
+    Obj = {Key, {ok, Val}, CurrTime},
+    lists:foldl(
+      fun(Node, Result) when Node /= node() ->
+	      send({Name, Node}, {insert_new, Obj}),
+	      Result;
+	 (_, _) ->
+	      try ets:lookup(Name, Key) of
+		  [Old] ->
+		      case delete_if_expired(Name, Old, CurrTime) of
+			  true -> do_insert(new, Name, Obj);
+			  false -> false
+		      end;
+		  [] -> do_insert(new, Name, Obj)
+	      catch _:badarg ->
+		      false
+	      end
+      end, false, Nodes).
 
 -spec lookup(atom(), any()) -> {ok, any()} | error.
 lookup(Name, Key) ->
@@ -138,27 +140,56 @@ lookup(Name, Key) ->
 -spec lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | error.
 lookup(Name, Key, ReadFun) ->
     try ets:lookup(Name, Key) of
-	[{_, Val, ExpireTime}] ->
-	    if is_integer(ExpireTime) ->
-		    case ExpireTime > current_time() of
-			true -> Val;
-			false ->
-			    ets:delete_object(Name, {Key, Val, ExpireTime}),
-			    do_lookup(Name, Key, ReadFun)
-		    end;
-	       true ->
-		    Val
-	    end;
+	[{_, Val, _} = Obj] ->
+	    delete_if_expired(Name, Obj),
+	    Val;
+	[] when ReadFun /= undefined ->
+	    Ver = get_counter(Name),
+	    Val = ReadFun(),
+	    case get_counter(Name) of
+		Ver ->
+		    do_insert(new, Name, {Key, Val, current_time()});
+		_ ->
+		    ok
+	    end,
+	    Val;
 	[] ->
-	    do_lookup(Name, Key, ReadFun);
-	_ when ReadFun /= undefined ->
-	    ReadFun();
-	_ ->
 	    error
     catch _:badarg when ReadFun /= undefined ->
 	    ReadFun();
 	  _:badarg ->
 	    error
+    end.
+
+-spec update(atom(), any(), {ok, any()} | error, update_fun()) -> ok | any().
+update(Name, Key, Val, UpdateFun) ->
+    update(Name, Key, Val, UpdateFun, [node()]).
+
+-spec update(atom(), any(), {ok, any()} | error, update_fun(), [node()]) -> boolean().
+update(Name, Key, Val, UpdateFun, Nodes) ->
+    NeedUpdate = try ets:lookup(Name, Key) of
+		     [{_, Val, _} = Obj] ->
+			 delete_if_expired(Name, Obj);
+		     _ ->
+			 true
+		 catch _:badarg ->
+			 true
+		 end,
+    if NeedUpdate ->
+	    case UpdateFun() of
+		ok ->
+		    lists:foldl(
+		      fun(Node, Result) when Node /= node() ->
+			      send({Name, Node}, {delete, Key}),
+			      Result;
+			 (_, _) ->
+			      do_insert(replace, Name, {Key, Val, current_time()})
+		      end, false, Nodes);
+		_ ->
+		    false
+	    end;
+       true ->
+	    false
     end.
 
 -spec clear(atom()) -> ok.
@@ -167,26 +198,36 @@ clear(Name) ->
 
 -spec clear(atom(), [atom()]) -> ok.
 clear(Name, Nodes) ->
-    case whereis(Name) of
-	undefined -> ok;
-	_ ->
-	    lists:foreach(
-	      fun(Node) when Node /= node() ->
-		      send({Name, Node}, clear);
-		 (_MyNode) ->
-		      ets:delete_all_objects(Name)
-	      end, Nodes)
-    end.
+    lists:foreach(
+      fun(Node) when Node /= node() ->
+	      send({Name, Node}, clear);
+	 (_MyNode) ->
+	      ets_delete_all_objects(Name)
+      end, Nodes).
 
--spec filter(atom(), filter_fun()) -> ok.
+-spec clean(atom()) -> ok.
+clean(Name) ->
+    clean(Name, [node()]).
+
+-spec clean(atom(), [node()]) -> ok.
+clean(Name, Nodes) ->
+    lists:foreach(
+      fun(Node) ->
+	      send({Name, Node}, clean)
+      end, Nodes).
+
+-spec filter(atom(), filter_fun()) -> non_neg_integer().
 filter(Name, FilterFun) ->
     case whereis(Name) of
-	undefined -> ok;
+	undefined -> 0;
 	_ ->
-	    ets:safe_fixtable(Name, true),
-	    do_filter(Name, FilterFun, current_time(), ets:first(Name)),
-	    ets:safe_fixtable(Name, false),
-	    ok
+	    {ok, LifeTime} = ets_cache_options:life_time(Name),
+	    CurrTime = current_time(),
+	    ets_safe_fixtable(Name, true),
+	    Num = do_filter(Name, FilterFun, LifeTime, CurrTime,
+			    0, ets_first(Name)),
+	    ets_safe_fixtable(Name, false),
+	    Num
     end.
 
 -spec all() -> [atom()].
@@ -205,13 +246,13 @@ info(Name) ->
 	    [{max_size, MaxSize},
 	     {cache_missed, CacheMissed},
 	     {life_time, LifeTime}
-	     |lists:filter(
-		fun({read_concurrency, _}) -> true;
-		   ({write_concurrency, _}) -> true;
-		   ({memory, _}) -> true;
-		   ({owner, _}) -> true;
-		   ({name, _}) -> true;
-		   ({size, _}) -> true;
+	     |lists:filtermap(
+		fun({read_concurrency, V}) -> {true, V};
+		   ({write_concurrency, V}) -> {true, V};
+		   ({memory, V}) -> {true, V * erlang:system_info(wordsize)};
+		   ({owner, V}) -> {true, V};
+		   ({name, V}) -> {true, V};
+		   ({size, V}) -> {true, V};
 		   (_) -> false
 		end, ETSInfo)]
     end.
@@ -224,20 +265,28 @@ info(Name, Option) ->
 	_ -> erlang:error(badarg)
     end.
 
+load_nif() ->
+    Path = p1_nif_utils:get_so_path(?MODULE, [?MODULE], atom_to_list(?MODULE)),
+    MaxTables = get_max_tables(),
+    case erlang:load_nif(Path, MaxTables) of
+	ok -> ok;
+	{error, {Reason, Text}} ->
+	    error_logger:error_msg("Failed to load NIF ~s: ~s (~p)",
+				   [Path, Text, Reason]),
+	    erlang:nif_error(Reason)
+    end.
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 init([Name, Opts]) ->
+    process_flag(trap_exit, true),
     ets:new(Name, [named_table, public, {read_concurrency, true}]),
-    State = do_setopts(#state{tab = Name}, Opts),
-    start_clean_timer(),
-    {ok, State}.
+    Counter = new_counter(),
+    TRef = start_clean_timer(),
+    State = #state{tab = Name, clean_timer = TRef},
+    {ok, do_setopts(State, [{counter, Counter}|Opts])}.
 
-handle_call({insert, Key, Val}, _From, State) ->
-    do_insert(State, Key, Val),
-    {reply, ok, State};
-handle_call({insert_new, Key, Val}, _From, State) ->
-    {reply, do_insert_new(State, Key, Val), State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -247,38 +296,48 @@ handle_cast({setopts, Opts}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({insert, Ref, Key, error}, #state{cache_missed = false} = State) ->
-    ets:delete_object(State#state.tab, {Key, Ref}),
-    {noreply, State};
-handle_info({insert, Ref, Key, Val}, #state{tab = Tab} = State) ->
+handle_info({insert_new, {Key, _, CurrTime} = New}, #state{tab = Tab} = State) ->
     case ets:lookup(Tab, Key) of
-	[{_, Ref}] ->
-	    do_insert(State, Key, Val);
+	[Old] ->
+	    case delete_if_expired(Tab, Old, CurrTime) of
+		true ->
+		    do_insert(new, Tab, New);
+		false ->
+		    ok
+	    end;
+	[] ->
+	    do_insert(new, Tab, New)
+    end,
+    {noreply, State};
+handle_info({delete, Key}, #state{tab = Tab} = State) ->
+    ets_delete(Tab, Key),
+    {noreply, State};
+handle_info(clear, #state{tab = Tab} = State) ->
+    ets_delete_all_objects(Tab),
+    {noreply, State};
+handle_info(clean, #state{clean_timer = TRef} = State) ->
+    clean_expired(State),
+    NewTRef = start_clean_timer(TRef),
+    {noreply, State#state{clean_timer = NewTRef}};
+handle_info(table_overflow, #state{tab = Tab, max_size = MaxSize} = State) ->
+    case ets:info(Tab, size) of
+	N when N >= MaxSize ->
+	    error_logger:warning_msg(
+	      "Shrinking cache '~s' (current size = ~B, max size = ~B, "
+	      "life time = ~p, memory = ~B bytes); you should increase maximum "
+	      "cache size if this message repeats too often",
+	      [Tab, N, MaxSize, State#state.life_time,
+	       ets:info(Tab, memory) * erlang:system_info(wordsize)]),
+	    ets_delete_all_objects(Tab);
 	_ ->
 	    ok
     end,
     {noreply, State};
-handle_info({insert, Key, Val}, State) ->
-    do_insert(State, Key, Val),
-    {noreply, State};
-handle_info({insert_new, Key, Val}, State) ->
-    do_insert_new(State, Key, Val),
-    {noreply, State};
-handle_info({delete, Key}, #state{tab = Tab} = State) ->
-    ets:delete(Tab, Key),
-    {noreply, State};
-handle_info(clear, #state{tab = Tab} = State) ->
-    ets:delete_all_objects(Tab),
-    {noreply, State};
-handle_info({timeout, _TRef, clean}, State) ->
-    clean_expired(State),
-    start_clean_timer(),
-    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
-    ok.
+terminate(_Reason, #state{tab = Tab}) ->
+    delete_counter(Tab).
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -286,90 +345,62 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
--spec check_size(atom(), non_neg_integer() | infinity) -> true.
-check_size(Tab, MaxSize) when is_integer(MaxSize) ->
-    case ets:info(Tab, size) of
-	N when N >= MaxSize ->
-	    error_logger:warning_msg("shrinking ~s table", [Tab]),
-	    ets:delete_all_objects(Tab);
-	_ ->
-	    true
-    end;
-check_size(_, _) ->
-    true.
-
--spec do_filter(atom(), filter_fun(), integer(), any()) -> ok.
-do_filter(_Name, _FilterFun, _CurrTime, '$end_of_table') ->
+-spec check_size(atom(), pos_integer() | infinity) -> ok.
+check_size(_Tab, infinity) ->
     ok;
-do_filter(Name, FilterFun, CurrTime, Key) ->
-    case ets:lookup(Name, Key) of
-	[{Key, Val, ExpireTime}] when ExpireTime > CurrTime ->
-	    case FilterFun(Key, Val) of
-		true -> ok;
-		false -> ets:delete_object(Name, {Key, Val, ExpireTime})
-	    end;
+check_size(Tab, MaxSize) ->
+    try ets:info(Tab, size) of
+	N when N >= MaxSize ->
+	    send({Tab, node()}, table_overflow);
 	_ ->
 	    ok
-    end,
-    do_filter(Name, FilterFun, CurrTime, ets:next(Name, Key)).
-
--spec do_lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | error.
-do_lookup(_Name, _Key, undefined) ->
-    error;
-do_lookup(Name, Key, ReadFun) ->
-    Ref = make_ref(),
-    case ets:insert_new(Name, {Key, Ref}) of
-	true ->
-	    try
-		Val = ReadFun(),
-		case Val of
-		    {ok, _} ->
-			send(Name, {insert, Ref, Key, Val});
-		    error ->
-			send(Name, {insert, Ref, Key, Val});
-		    _Other ->
-			ets:delete_object(Name, {Key, Ref})
-		end,
-		Val
-	    catch E:R ->
-		    catch ets:delete_object(Name, {Key, Ref}),
-		    erlang:raise(E, R, erlang:get_stacktrace())
-	    end;
-	false ->
-	    ReadFun()
+    catch _:badarg ->
+	    ok
     end.
 
--spec do_insert(state(), any(), {ok, any()} | error) -> ok.
-do_insert(State, Key, Val) ->
-    check_size(State#state.tab, State#state.max_size),
-    LifeTime = State#state.life_time,
-    ExpireTime = if is_integer(LifeTime) ->
-			 current_time() + LifeTime;
-		    true ->
-			 LifeTime
-		 end,
-    ets:insert(State#state.tab, {Key, Val, ExpireTime}),
-    ok.
+do_insert(Op, Name, Obj) ->
+    {ok, CacheMissed} = ets_cache_options:cache_missed(Name),
+    {ok, MaxSize} = ets_cache_options:max_size(Name),
+    do_insert(Op, Name, Obj, CacheMissed, MaxSize).
 
--spec do_insert_new(state(), any(), {ok, any()} | error) -> boolean().
-do_insert_new(State, Key, Val) ->
-    Tab = State#state.tab,
-    LifeTime = State#state.life_time,
-    check_size(Tab, State#state.max_size),
-    if is_integer(LifeTime) ->
-	    CurrTime = current_time(),
-	    case ets:lookup(State#state.tab, Key) of
-		[{Key, Val, ExpireTime}] when ExpireTime > CurrTime ->
-		    ets:delete_object(Tab, {Key, Val, ExpireTime}),
-		    ets:insert_new(Tab, {Key, Val, LifeTime + CurrTime});
-		[] ->
-		    ets:insert_new(Tab, {Key, Val, LifeTime + CurrTime});
-		_ ->
-		    false
-	    end;
-       true ->
-	    ets:insert_new(Tab, {Key, Val, LifeTime})
+do_insert(_Op, _Name, {_Key, error, _Time}, _CacheMissed = false, _MaxSize) ->
+    false;
+do_insert(Op, Name, Obj, _CacheMissed, MaxSize) ->
+    check_size(Name, MaxSize),
+    try
+	case Op of
+	    new -> ets:insert_new(Name, Obj);
+	    replace -> ets:insert(Name, Obj)
+	end
+    catch _:badarg ->
+	    false
     end.
+
+-spec do_filter(atom(), filter_fun(), pos_integer() | infinity,
+		integer(), non_neg_integer(), any()) -> ok.
+do_filter(_Name, _FilterFun, _LifeTime, _CurrTime, Num, '$end_of_table') ->
+    Num;
+do_filter(Name, FilterFun, LifeTime, CurrTime, Num, Key) ->
+    NewNum = try ets:lookup(Name, Key) of
+		 [{Key, Val, Time}] ->
+		     if ?IS_EXPIRED(Time, LifeTime, CurrTime) ->
+			     ets_delete_object(Name, {Key, Val, Time}),
+			     Num;
+			true ->
+			     case FilterFun(Key, Val) of
+				 true ->
+				     Num;
+				 false ->
+				     ets_delete_object(Name, {Key, Val, Time}),
+				     Num + 1
+			     end
+		     end;
+		 _ ->
+		     Num
+	     catch _:badarg ->
+		     Num
+	     end,
+    do_filter(Name, FilterFun, LifeTime, CurrTime, NewNum, ets_next(Name, Key)).
 
 -spec check_opts([option()]) -> [option()].
 check_opts(Opts) ->
@@ -385,12 +416,14 @@ check_opts(Opts) ->
 	      end
       end, Opts).
 
--spec do_setopts(state(), [option()]) -> state().
+-spec do_setopts(state(), [{counter, counter()} | option()]) -> state().
 do_setopts(State, Opts) ->
     MaxSize = proplists:get_value(max_size, Opts, State#state.max_size),
     LifeTime = proplists:get_value(life_time, Opts, State#state.life_time),
     CacheMissed = proplists:get_value(cache_missed, Opts, State#state.cache_missed),
+    Counter = proplists:get_value(counter, Opts, State#state.counter),
     NewState = State#state{max_size = MaxSize,
+			   counter = Counter,
 			   life_time = LifeTime,
 			   cache_missed = CacheMissed},
     if State == NewState ->
@@ -400,6 +433,7 @@ do_setopts(State, Opts) ->
 	    p1_options:insert(ets_cache_options, max_size, Tab, MaxSize),
 	    p1_options:insert(ets_cache_options, life_time, Tab, LifeTime),
 	    p1_options:insert(ets_cache_options, cache_missed, Tab, CacheMissed),
+	    p1_options:insert(ets_cache_options, counter, Tab, Counter),
 	    p1_options:compile(ets_cache_options)
     end,
     NewState.
@@ -410,19 +444,157 @@ current_time() ->
 
 -spec start_clean_timer() -> reference().
 start_clean_timer() ->
+    start_clean_timer(make_ref()).
+
+-spec start_clean_timer(reference()) -> reference().
+start_clean_timer(TRef) ->
+    case erlang:cancel_timer(TRef) of
+	false ->
+	    receive {timeout, TRef, _} -> ok
+	    after 0 -> ok end;
+	_ -> ok
+    end,
     Timeout = crypto:rand_uniform(timer:minutes(1), timer:minutes(5)),
-    erlang:start_timer(Timeout, self(), clean).
+    erlang:send_after(Timeout, self(), clean).
 
 -spec clean_expired(state()) -> non_neg_integer().
-clean_expired(#state{life_time = infinity}) ->
-    0;
-clean_expired(#state{tab = Tab}) ->
+clean_expired(#state{tab = Tab, life_time = LifeTime}) ->
     CurrTime = current_time(),
-    ets:select_delete(
+    ets_select_delete(
       Tab, ets:fun2ms(
-	     fun({_, _, ExpireTime}) ->
-		     ExpireTime =< CurrTime
+	     fun({_, _, Time}) ->
+		     ?IS_EXPIRED(Time, LifeTime, CurrTime)
 	     end)).
+
+delete_if_expired(Name, Obj) ->
+    case ets_cache_options:life_time(Name) of
+	{ok, infinity} ->
+	    false;
+	{ok, LifeTime} ->
+	    delete_if_expired(Name, Obj, current_time(), LifeTime)
+    end.
+
+delete_if_expired(Name, Obj, CurrTime) ->
+    {ok, LifeTime} = ets_cache_options:life_time(Name),
+    delete_if_expired(Name, Obj, CurrTime, LifeTime).
+
+delete_if_expired(Name, {_, _, Time} = Obj, CurrTime, LifeTime) ->
+    if ?IS_EXPIRED(Time, LifeTime, CurrTime) ->
+	    ets_delete_object(Name, Obj);
+       true ->
+	    false
+    end.
 
 send(Dst, Msg) ->
     erlang:send(Dst, Msg, [noconnect, nosuspend]).
+
+-spec ets_delete(atom(), any()) -> boolean().
+ets_delete(Tab, Key) ->
+    try
+	incr_counter(Tab),
+	ets:delete(Tab, Key)
+    catch _:badarg ->
+	    false
+    end.
+
+-spec ets_delete_object(atom(), any()) -> boolean().
+ets_delete_object(Tab, Obj) ->
+    try
+	incr_counter(Tab),
+	ets:delete_object(Tab, Obj)
+    catch _:badarg ->
+	    false
+    end.
+
+-spec ets_delete_all_objects(atom()) -> boolean().
+ets_delete_all_objects(Tab) ->
+    try
+	incr_counter(Tab),
+	ets:delete_all_objects(Tab)
+    catch _:badarg ->
+	    false
+    end.
+
+-spec ets_select_delete(atom(), fun()) -> non_neg_integer().
+ets_select_delete(Tab, Fun) ->
+    try
+	incr_counter(Tab),
+	ets:select_delete(Tab, Fun)
+    catch _:badarg ->
+	    0
+    end.
+
+-spec ets_first(atom()) -> any().
+ets_first(Tab) ->
+    try ets:first(Tab)
+    catch _:badarg -> '$end_of_table'
+    end.
+
+-spec ets_next(atom(), any()) -> any().
+ets_next(Tab, Key) ->
+    try ets:next(Tab, Key)
+    catch _:badarg -> '$end_of_table'
+    end.
+
+-spec ets_safe_fixtable(atom(), boolean()) -> boolean().
+ets_safe_fixtable(Tab, Fix) ->
+    try ets:safe_fixtable(Tab, Fix)
+    catch _:badarg -> false
+    end.
+
+get_max_tables() ->
+    case application:get_env(cache_tab, max_cache_tables) of
+	undefined -> ?DEFAULT_MAX_CACHE_TABLES;
+	{ok, I} when is_integer(I), I > 0 -> I;
+	{ok, Val} ->
+	    error_logger:error_msg(
+	      "Incorrect value of 'max_cache_tables' "
+	      "application parameter: ~p", [Val]),
+	    ?DEFAULT_MAX_CACHE_TABLES
+    end.
+
+%%%===================================================================
+%%% Counters
+%%%===================================================================
+-spec new_counter() -> counter().
+new_counter() ->
+    case new_counter_nif() of
+	{ok, Counter} ->
+	    Counter;
+	{error, {system_limit, MaxTables}} ->
+	    error_logger:error_msg(
+	      "Maximum number (~B) of ETS cache tables has reached",
+	      [MaxTables]),
+	    erlang:error(system_limit)
+    end.
+
+-spec get_counter(atom()) -> non_neg_integer().
+get_counter(Name) ->
+    {ok, Counter} = ets_cache_options:counter(Name),
+    get_counter_nif(Counter).
+
+-spec incr_counter(atom()) -> non_neg_integer().
+incr_counter(Name) ->
+    {ok, Counter} = ets_cache_options:counter(Name),
+    incr_counter_nif(Counter).
+
+-spec delete_counter(counter()) -> ok.
+delete_counter(Name) ->
+    {ok, Counter} = ets_cache_options:counter(Name),
+    delete_counter_nif(Counter).
+
+-spec new_counter_nif() -> {ok, counter()} | {error, {system_limit, pos_integer()}}.
+new_counter_nif() ->
+    erlang:nif_error({nif_not_loaded, ?MODULE}).
+
+-spec get_counter_nif(counter()) -> non_neg_integer().
+get_counter_nif(_) ->
+    erlang:nif_error({nif_not_loaded, ?MODULE}).
+
+-spec incr_counter_nif(counter()) -> non_neg_integer().
+incr_counter_nif(_) ->
+    erlang:nif_error({nif_not_loaded, ?MODULE}).
+
+-spec delete_counter_nif(counter()) -> ok.
+delete_counter_nif(_) ->
+    erlang:nif_error({nif_not_loaded, ?MODULE}).

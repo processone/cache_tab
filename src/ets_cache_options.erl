@@ -21,7 +21,7 @@
 -module(ets_cache_options).
 
 %% API
--export([max_size/1, life_time/1, cache_missed/1]).
+-export([max_size/1, life_time/1, cache_missed/1, counter/1]).
 
 %%%===================================================================
 %%% API
@@ -34,6 +34,9 @@ life_time(_) -> {ok, infinity}.
 
 -spec cache_missed(atom()) -> {ok, boolean()}.
 cache_missed(_) -> {ok, true}.
+
+-spec counter(non_neg_integer()) -> {ok, non_neg_integer()} | undefined.
+counter(_) -> undefined.
 
 %%%===================================================================
 %%% Internal functions
