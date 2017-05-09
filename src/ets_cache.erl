@@ -165,7 +165,7 @@ lookup(Name, Key, ReadFun) ->
 update(Name, Key, Val, UpdateFun) ->
     update(Name, Key, Val, UpdateFun, [node()]).
 
--spec update(atom(), any(), {ok, any()} | error, update_fun(), [node()]) -> boolean().
+-spec update(atom(), any(), {ok, any()} | error, update_fun(), [node()]) -> ok | any().
 update(Name, Key, Val, UpdateFun, Nodes) ->
     NeedUpdate = try ets:lookup(Name, Key) of
 		     [{_, Val, _} = Obj] ->
@@ -178,18 +178,17 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
     if NeedUpdate ->
 	    case UpdateFun() of
 		ok ->
-		    lists:foldl(
-		      fun(Node, Result) when Node /= node() ->
-			      send({Name, Node}, {delete, Key}),
-			      Result;
-			 (_, _) ->
+		    lists:foreach(
+		      fun(Node) when Node /= node() ->
+			      send({Name, Node}, {delete, Key});
+			 (_) ->
 			      do_insert(replace, Name, {Key, Val, current_time()})
-		      end, false, Nodes);
-		_ ->
-		    false
+		      end, Nodes);
+		Other ->
+		    Other
 	    end;
        true ->
-	    false
+	    ok
     end.
 
 -spec clear(atom()) -> ok.
