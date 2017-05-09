@@ -247,12 +247,11 @@ info(Name) ->
 	     {cache_missed, CacheMissed},
 	     {life_time, LifeTime}
 	     |lists:filtermap(
-		fun({read_concurrency, V}) -> {true, V};
-		   ({write_concurrency, V}) -> {true, V};
-		   ({memory, V}) -> {true, V * erlang:system_info(wordsize)};
-		   ({owner, V}) -> {true, V};
-		   ({name, V}) -> {true, V};
-		   ({size, V}) -> {true, V};
+		fun({memory, V}) ->
+			{true, {memory, V * erlang:system_info(wordsize)}};
+		   ({owner, _}) -> true;
+		   ({name, _}) -> true;
+		   ({size, _}) -> true;
 		   (_) -> false
 		end, ETSInfo)]
     end.
