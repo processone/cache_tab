@@ -55,7 +55,7 @@
 		  {life_time, milli_seconds() | infinity} |
 		  {cache_missed, boolean()}.
 -type read_fun() :: fun(() -> {ok, any()} | error).
--type update_fun() :: fun(() -> ok | any()).
+-type update_fun() :: fun(() -> ok | {ok, any()} | error).
 -type filter_fun() :: fun((any(), {ok, any()} | error) -> boolean()).
 -type fold_fun() :: fun((any(), {ok, any()} | error, any()) -> any()).
 -type state() :: #state{}.
@@ -146,14 +146,23 @@ lookup(Name, Key, ReadFun) ->
 	    Val;
 	[] when ReadFun /= undefined ->
 	    Ver = get_counter(Name),
-	    Val = ReadFun(),
-	    case get_counter(Name) of
-		Ver ->
-		    do_insert(new, Name, {Key, Val, current_time()});
+	    Val = case ReadFun() of
+		      {ok, Val1} -> {ok, Val1};
+		      error -> error;
+		      Other -> {error, Other}
+		  end,
+	    case Val of
+		{error, Reason} ->
+		    Reason;
 		_ ->
-		    ok
-	    end,
-	    Val;
+		    case get_counter(Name) of
+			Ver ->
+			    do_insert(new, Name, {Key, Val, current_time()});
+			_ ->
+			    ok
+		    end,
+		    Val
+	    end;
 	[] ->
 	    error
     catch _:badarg when ReadFun /= undefined ->
@@ -177,16 +186,23 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
 			 true
 		 end,
     if NeedUpdate ->
-	    case UpdateFun() of
-		ok ->
+	    NewVal = case UpdateFun() of
+			 ok -> Val;
+			 {ok, Val1} -> {ok, Val1};
+			 error -> error;
+			 Other -> {error, Other}
+		     end,
+	    case NewVal of
+		{error, Reason} ->
+		    Reason;
+		_ ->
 		    lists:foreach(
 		      fun(Node) when Node /= node() ->
 			      send({Name, Node}, {delete, Key});
 			 (_) ->
-			      do_insert(replace, Name, {Key, Val, current_time()})
-		      end, Nodes);
-		Other ->
-		    Other
+			      do_insert(replace, Name, {Key, NewVal, current_time()})
+		      end, Nodes),
+		    NewVal
 	    end;
        true ->
 	    ok
