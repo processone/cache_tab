@@ -25,7 +25,7 @@
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
 	 lookup/2, lookup/3, insert_new/3, insert_new/4,
 	 update/4, update/5, setopts/2, clear/1, clear/2,
-	 clean/1, clean/2, filter/2, all/0, info/1, info/2]).
+	 clean/1, clean/2, filter/2, fold/3, all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -57,6 +57,7 @@
 -type read_fun() :: fun(() -> {ok, any()} | error).
 -type update_fun() :: fun(() -> ok | any()).
 -type filter_fun() :: fun((any(), {ok, any()} | error) -> boolean()).
+-type fold_fun() :: fun((any(), {ok, any()} | error, any()) -> any()).
 -type state() :: #state{}.
 
 %%%===================================================================
@@ -229,6 +230,20 @@ filter(Name, FilterFun) ->
 	    Num
     end.
 
+-spec fold(fold_fun(), any(), atom()) -> any().
+fold(FoldFun, Acc, Name) ->
+    case whereis(Name) of
+	undefined -> Acc;
+	_ ->
+	    {ok, LifeTime} = ets_cache_options:life_time(Name),
+	    CurrTime = current_time(),
+	    ets_safe_fixtable(Name, true),
+	    NewAcc = do_fold(Name, FoldFun, LifeTime, CurrTime,
+			     Acc, ets_first(Name)),
+	    ets_safe_fixtable(Name, false),
+	    NewAcc
+    end.
+
 -spec all() -> [atom()].
 all() ->
     [Child || {Child, _, _, [?MODULE]} <- supervisor:which_children(cache_tab_sup)].
@@ -375,7 +390,7 @@ do_insert(Op, Name, Obj, _CacheMissed, MaxSize) ->
     end.
 
 -spec do_filter(atom(), filter_fun(), pos_integer() | infinity,
-		integer(), non_neg_integer(), any()) -> ok.
+		integer(), non_neg_integer(), any()) -> non_neg_integer().
 do_filter(_Name, _FilterFun, _LifeTime, _CurrTime, Num, '$end_of_table') ->
     Num;
 do_filter(Name, FilterFun, LifeTime, CurrTime, Num, Key) ->
@@ -399,6 +414,26 @@ do_filter(Name, FilterFun, LifeTime, CurrTime, Num, Key) ->
 		     Num
 	     end,
     do_filter(Name, FilterFun, LifeTime, CurrTime, NewNum, ets_next(Name, Key)).
+
+-spec do_fold(atom(), fold_fun(), pos_integer() | infinity,
+	      integer(), any(), any()) -> any().
+do_fold(_Name, _FoldFun, _LifeTime, _CurrTime, Acc, '$end_of_table') ->
+    Acc;
+do_fold(Name, FoldFun, LifeTime, CurrTime, Acc, Key) ->
+    NewAcc = try ets:lookup(Name, Key) of
+		 [{Key, Val, Time}] ->
+		     if ?IS_EXPIRED(Time, LifeTime, CurrTime) ->
+			     ets_delete_object(Name, {Key, Val, Time}),
+			     Acc;
+			true ->
+			     FoldFun(Key, Val, Acc)
+		     end;
+		 _ ->
+		     Acc
+	     catch _:badarg ->
+		     Acc
+	     end,
+    do_fold(Name, FoldFun, LifeTime, CurrTime, NewAcc, ets_next(Name, Key)).
 
 -spec check_opts([option()]) -> [option()].
 check_opts(Opts) ->
