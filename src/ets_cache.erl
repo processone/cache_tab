@@ -205,7 +205,7 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
 		    NewVal
 	    end;
        true ->
-	    ok
+	    Val
     end.
 
 -spec clear(atom()) -> ok.
