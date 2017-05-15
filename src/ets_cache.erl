@@ -543,6 +543,8 @@ ets_delete(Tab, Key) ->
 	incr_counter(Tab),
 	ets:delete(Tab, Key)
     catch _:badarg ->
+	    false;
+	  _:{badmatch, undefined} ->
 	    false
     end.
 
@@ -552,6 +554,8 @@ ets_delete_object(Tab, Obj) ->
 	incr_counter(Tab),
 	ets:delete_object(Tab, Obj)
     catch _:badarg ->
+	    false;
+	  _:{badmatch, undefined} ->
 	    false
     end.
 
@@ -561,6 +565,8 @@ ets_delete_all_objects(Tab) ->
 	incr_counter(Tab),
 	ets:delete_all_objects(Tab)
     catch _:badarg ->
+	    false;
+	  _:{badmatch, undefined} ->
 	    false
     end.
 
