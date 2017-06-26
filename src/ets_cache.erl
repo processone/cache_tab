@@ -187,7 +187,7 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
 		 end,
     if NeedUpdate ->
 	    NewVal = case UpdateFun() of
-			 ok -> Val;
+			 ok -> {ok, Val};
 			 {ok, Val1} -> {ok, Val1};
 			 error -> error;
 			 Other -> {error, Other}
