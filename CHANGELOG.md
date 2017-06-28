@@ -1,3 +1,7 @@
+# Version 1.0.9
+
+* Make sure we publish include dir on hex.pm
+
 # Version 1.0.8
 
 * Make rebar.config.script more structured and fix problem with coveralls
