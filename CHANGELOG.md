@@ -1,3 +1,7 @@
+# Version 1.0.10
+
+* Fix hex packaging
+
 # Version 1.0.9
 
 * Make sure we publish include dir on hex.pm
