@@ -134,11 +134,11 @@ insert_new(Name, Key, Val, Nodes) ->
 	      end
       end, false, Nodes).
 
--spec lookup(atom(), any()) -> {ok, any()} | error.
+-spec lookup(atom(), any()) -> {ok, any()} | any().
 lookup(Name, Key) ->
     lookup(Name, Key, undefined).
 
--spec lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | error.
+-spec lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | any().
 lookup(Name, Key, ReadFun) ->
     try ets:lookup(Name, Key) of
 	[{_, Val, _} = Obj] ->
@@ -149,6 +149,7 @@ lookup(Name, Key, ReadFun) ->
 	    Val = case ReadFun() of
 		      {ok, Val1} -> {ok, Val1};
 		      error -> error;
+		      {error, notfound} -> error;
 		      Other -> {error, Other}
 		  end,
 	    case Val of
@@ -190,6 +191,7 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
 			 ok -> Val;
 			 {ok, Val1} -> {ok, Val1};
 			 error -> error;
+			 {error, notfound} -> error;
 			 Other -> {error, Other}
 		     end,
 	    case NewVal of
