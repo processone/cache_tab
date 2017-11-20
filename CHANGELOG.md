@@ -1,3 +1,7 @@
+# Version 1.0.12
+
+* Treat {error, notfound} callback result as a lookup mismatch
+
 # Version 1.0.11
 
 * Updating p1_utils to version 1.0.10.
