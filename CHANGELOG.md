@@ -1,5 +1,6 @@
 # Version 1.0.15
 
+* Updating p1_utils to version 6ff85e8.
 * Don't compile ets\_cache to native code
 * Use rand:unifor instead of crypto module
 
