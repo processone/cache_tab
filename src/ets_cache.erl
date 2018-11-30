@@ -23,7 +23,7 @@
 
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
-	 lookup/2, lookup/3, insert_new/3, insert_new/4,
+	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
 	 update/4, update/5, setopts/2, clear/1, clear/2,
 	 clean/1, clean/2, filter/2, fold/3, all/0, info/1, info/2]).
 %% gen_server callbacks
@@ -112,28 +112,21 @@ delete(Name, Key, Nodes) ->
 	      ets_delete(Name, Key)
       end, Nodes).
 
-insert_new(Name, Key, Val) ->
-    insert_new(Name, Key, Val, [node()]).
+-spec insert(atom(), any(), any()) -> boolean().
+insert(Name, Key, Val) ->
+    insert(Name, Key, Val, [node()]).
 
+-spec insert(atom(), any(), any(), [node()]) -> boolean().
+insert(Name, Key, Val, Nodes) ->
+    insert(replace, Name, Key, Val, Nodes).
+
+-spec insert_new(atom(), any(), any()) -> boolean().
+insert_new(Name, Key, Val) ->
+    insert(Name, Key, Val, [node()]).
+
+-spec insert_new(atom(), any(), any(), [node()]) -> boolean().
 insert_new(Name, Key, Val, Nodes) ->
-    CurrTime = current_time(),
-    Obj = {Key, {ok, Val}, CurrTime},
-    lists:foldl(
-      fun(Node, Result) when Node /= node() ->
-	      send({Name, Node}, {insert_new, Obj}),
-	      Result;
-	 (_, _) ->
-	      try ets:lookup(Name, Key) of
-		  [Old] ->
-		      case delete_if_expired(Name, Old, CurrTime) of
-			  true -> do_insert(new, Name, Obj);
-			  false -> false
-		      end;
-		  [] -> do_insert(new, Name, Obj)
-	      catch _:badarg ->
-		      false
-	      end
-      end, false, Nodes).
+    insert(new, Name, Key, Val, Nodes).
 
 -spec lookup(atom(), any()) -> {ok, any()} | any().
 lookup(Name, Key) ->
@@ -328,17 +321,17 @@ handle_cast({setopts, Opts}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({insert_new, {Key, _, CurrTime} = New}, #state{tab = Tab} = State) ->
+handle_info({insert, Op, {Key, _, CurrTime} = New}, #state{tab = Tab} = State) ->
     case ets:lookup(Tab, Key) of
 	[Old] ->
 	    case delete_if_expired(Tab, Old, CurrTime) of
 		true ->
-		    do_insert(new, Tab, New);
+		    do_insert(Op, Tab, New);
 		false ->
 		    ok
 	    end;
 	[] ->
-	    do_insert(new, Tab, New)
+	    do_insert(Op, Tab, New)
     end,
     {noreply, State};
 handle_info({delete, Key}, #state{tab = Tab} = State) ->
@@ -389,6 +382,27 @@ check_size(Tab, MaxSize) ->
     catch _:badarg ->
 	    ok
     end.
+
+-spec insert(new | replace, atom(), any(), any(), [node()]) -> boolean().
+insert(Op, Name, Key, Val, Nodes) ->
+    CurrTime = current_time(),
+    Obj = {Key, {ok, Val}, CurrTime},
+    lists:foldl(
+      fun(Node, Result) when Node /= node() ->
+	      send({Name, Node}, {insert, Op, Obj}),
+	      Result;
+	 (_, _) ->
+	      try ets:lookup(Name, Key) of
+		  [Old] ->
+		      case delete_if_expired(Name, Old, CurrTime) of
+			  true -> do_insert(Op, Name, Obj);
+			  false -> false
+		      end;
+		  [] -> do_insert(Op, Name, Obj)
+	      catch _:badarg ->
+		      false
+	      end
+      end, false, Nodes).
 
 do_insert(Op, Name, Obj) ->
     {ok, CacheMissed} = ets_cache_options:cache_missed(Name),
