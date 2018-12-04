@@ -1,3 +1,7 @@
+# Version 1.0.17
+
+* Add ets\_cache:insert/3,4 functions
+
 # Version 1.0.16
 
 * Updating p1_utils to version 1.0.13.
