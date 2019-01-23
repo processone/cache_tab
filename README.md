@@ -28,7 +28,7 @@ it with rebar:
 You can start the application with the command:
 
 ```
-$ erl -pa ebin/
+$ erl -pa ebin -pa deps/*/ebin
 Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]
 
 Eshell V7.1  (abort with ^G)
