@@ -1,3 +1,7 @@
+# Version 1.0.18
+
+* Add contribution guide
+
 # Version 1.0.17
 
 * Add ets\_cache:insert/3,4 functions
