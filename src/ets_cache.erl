@@ -24,7 +24,7 @@
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
 	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
-	 update/4, update/5, setopts/2, clear/1, clear/2,
+	 update/4, update/5, setopts/2, clear/1, clear/2, untag/1,
 	 clean/1, clean/2, filter/2, fold/3, all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -130,26 +130,27 @@ insert_new(Name, Key, Val, Nodes) ->
 
 -spec lookup(atom(), any()) -> {ok, any()} | any().
 lookup(Name, Key) ->
-    lookup(Name, Key, undefined).
+    lookup(Name, Key, error).
 
--spec lookup(atom(), any(), read_fun() | undefined) -> {ok, any()} | any().
-lookup(Name, Key, ReadFun) ->
+-spec lookup(atom(), any(), read_fun() | term()) -> {ok, any()} | any().
+lookup(Name, Key, Return) ->
     try ets:lookup(Name, Key) of
 	[{_, Val, _} = Obj] ->
 	    delete_if_expired(Name, Obj),
 	    Val;
-	[] when ReadFun /= undefined ->
+	[] when is_function(Return) ->
 	    Ver = get_counter(Name),
-	    Val = case ReadFun() of
-		      {ok, Val1} -> {ok, Val1};
-		      error -> error;
-		      {error, notfound} -> error;
-		      Other -> {error, Other}
-		  end,
-	    case Val of
-		{error, Reason} ->
-		    Reason;
-		_ ->
+	    case case Return() of
+		     {ok, _} = Ret -> {cache, Ret};
+		     error -> {cache, error};
+		     {error, notfound} -> {cache, error};
+		     {cache, _} = Ret -> Ret;
+		     {nocache, _} = Ret -> Ret;
+		     Other -> {nocache, Other}
+		 end of
+		{nocache, Val} ->
+		    Val;
+		{cache, Val} ->
 		    case get_counter(Name) of
 			Ver ->
 			    do_insert(new, Name, {Key, Val, current_time()});
@@ -159,11 +160,11 @@ lookup(Name, Key, ReadFun) ->
 		    Val
 	    end;
 	[] ->
-	    error
-    catch _:badarg when ReadFun /= undefined ->
-	    ReadFun();
+	    Return
+    catch _:badarg when is_function(Return) ->
+	    untag(Return());
 	  _:badarg ->
-	    error
+	    Return
     end.
 
 -spec update(atom(), any(), {ok, any()} | error, update_fun()) -> ok | any().
@@ -181,17 +182,18 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
 			 true
 		 end,
     if NeedUpdate ->
-	    NewVal = case UpdateFun() of
-			 ok -> Val;
-			 {ok, Val1} -> {ok, Val1};
-			 error -> error;
-			 {error, notfound} -> error;
-			 Other -> {error, Other}
-		     end,
-	    case NewVal of
-		{error, Reason} ->
-		    Reason;
-		_ ->
+	    case case UpdateFun() of
+		     ok -> {cache, Val};
+		     {ok, _} = Ret -> {cache, Ret};
+		     error -> {cache, error};
+		     {error, notfound} -> {cache, error};
+		     {cache, _} = Ret -> Ret;
+		     {nocache, _} = Ret -> Ret;
+		     Other -> {nocache, Other}
+		 end of
+		{nocache, NewVal} ->
+		    NewVal;
+		{cache, NewVal} ->
 		    lists:foreach(
 		      fun(Node) when Node /= node() ->
 			      send({Name, Node}, {delete, Key});
@@ -289,6 +291,11 @@ info(Name, Option) ->
 	{_, Value} -> Value;
 	_ -> erlang:error(badarg)
     end.
+
+-spec untag(term()) -> term().
+untag({cache, Val}) -> Val;
+untag({nocache, Val}) -> Val;
+untag(Val) -> Val.
 
 load_nif() ->
     Path = p1_nif_utils:get_so_path(?MODULE, [?MODULE], atom_to_list(?MODULE)),
