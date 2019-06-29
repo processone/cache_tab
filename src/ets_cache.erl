@@ -50,6 +50,7 @@
 -define(IS_EXPIRED(Time, LifeTime, CurrTime),
 	(is_integer(LifeTime) andalso (Time + LifeTime =< CurrTime))).
 
+-type tag() :: cache | nocache.
 -type counter() :: non_neg_integer().
 -type milli_seconds() :: pos_integer().
 -type option() :: {max_size, pos_integer() | infinity} |
@@ -60,6 +61,7 @@
 -type filter_fun() :: fun((any(), {ok, any()} | error) -> boolean()).
 -type fold_fun() :: fun((any(), {ok, any()} | error, any()) -> any()).
 -type state() :: #state{}.
+-export_type([tag/0]).
 
 %%%===================================================================
 %%% API
