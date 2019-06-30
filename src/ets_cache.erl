@@ -24,7 +24,7 @@
 %% API
 -export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
 	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
-	 update/4, update/5, setopts/2, clear/1, clear/2, untag/1,
+	 update/4, update/5, incr/3, incr/4, setopts/2, clear/1, clear/2, untag/1,
 	 clean/1, clean/2, filter/2, fold/3, all/0, info/1, info/2]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -208,6 +208,20 @@ update(Name, Key, Val, UpdateFun, Nodes) ->
 	    Val
     end.
 
+-spec incr(atom(), any(), non_neg_integer()) -> ok.
+incr(Name, Key, Incr) ->
+    incr(Name, Key, Incr, [node()]).
+
+-spec incr(atom(), any(), non_neg_integer(), [node()]) -> ok.
+incr(Name, Key, Incr, Nodes) ->
+    Obj = {Key, Incr, current_time()},
+    lists:foreach(
+      fun(Node) when Node /= node() ->
+	      send({Name, Node}, {incr, Obj});
+	 (_) ->
+	      do_insert(incr, Name, Obj)
+      end, Nodes).
+
 -spec clear(atom()) -> ok.
 clear(Name) ->
     clear(Name, [node()]).
@@ -343,6 +357,9 @@ handle_info({insert, Op, {Key, _, CurrTime} = New}, #state{tab = Tab} = State) -
 	    do_insert(Op, Tab, New)
     end,
     {noreply, State};
+handle_info({incr, Obj}, #state{tab = Tab} = State) ->
+    do_insert(incr, Tab, Obj),
+    {noreply, State};
 handle_info({delete, Key}, #state{tab = Tab} = State) ->
     ets_delete(Tab, Key),
     {noreply, State};
@@ -425,7 +442,11 @@ do_insert(Op, Name, Obj, _CacheMissed, MaxSize) ->
     try
 	case Op of
 	    new -> ets:insert_new(Name, Obj);
-	    replace -> ets:insert(Name, Obj)
+	    replace -> ets:insert(Name, Obj);
+	    incr ->
+		{Key, Incr, Time} = Obj,
+		ets:update_counter(Name, Key, {2, Incr}),
+		ets:update_element(Name, Key, {3, Time})
 	end
     catch _:badarg ->
 	    false
@@ -515,7 +536,7 @@ do_setopts(State, Opts) ->
 
 -spec current_time() -> integer().
 current_time() ->
-    p1_time_compat:monotonic_time(milli_seconds).
+    erlang:system_time(millisecond).
 
 -spec start_clean_timer() -> reference().
 start_clean_timer() ->
