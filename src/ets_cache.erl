@@ -444,6 +444,7 @@ do_insert(Op, Name, Obj, _CacheMissed, MaxSize) ->
 	    new -> ets:insert_new(Name, Obj);
 	    replace -> ets:insert(Name, Obj);
 	    incr ->
+		incr_counter(Name),
 		{Key, Incr, Time} = Obj,
 		ets:update_counter(Name, Key, {2, Incr}),
 		ets:update_element(Name, Key, {3, Time})
