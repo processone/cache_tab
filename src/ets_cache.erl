@@ -22,10 +22,17 @@
 -behaviour(gen_server).
 
 %% API
--export([new/1, new/2, start_link/2, delete/1, delete/2, delete/3,
-	 lookup/2, lookup/3, insert/3, insert/4, insert_new/3, insert_new/4,
-	 update/4, update/5, incr/3, incr/4, setopts/2, clear/1, clear/2, untag/1,
-	 clean/1, clean/2, filter/2, fold/3, all/0, info/1, info/2]).
+-export([start_link/2]).
+-export([new/1, new/2, delete/1]).
+-export([delete/2, delete/3, match_delete/2, match_delete/3]).
+-export([lookup/2, lookup/3]).
+-export([insert/3, insert/4, insert_new/3, insert_new/4]).
+-export([update/4, update/5]).
+-export([incr/3, incr/4]).
+-export([setopts/2, all/0, info/1, info/2]).
+-export([clear/1, clear/2, clean/1, clean/2]).
+-export([filter/2, fold/3]).
+-export([untag/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -55,7 +62,8 @@
 -type milli_seconds() :: pos_integer().
 -type option() :: {max_size, pos_integer() | infinity} |
 		  {life_time, milli_seconds() | infinity} |
-		  {cache_missed, boolean()}.
+		  {cache_missed, boolean()} |
+		  {type, set | ordered_set | bag | duplicate_bag}.
 -type read_fun() :: fun(() -> {ok, any()} | error).
 -type update_fun() :: fun(() -> ok | {ok, any()} | error).
 -type filter_fun() :: fun((any(), {ok, any()} | error) -> boolean()).
@@ -112,6 +120,19 @@ delete(Name, Key, Nodes) ->
 	      send({Name, Node}, {delete, Key});
 	 (_MyNode) ->
 	      ets_delete(Name, Key)
+      end, Nodes).
+
+-spec match_delete(atom(), any()) -> ok.
+match_delete(Name, Match) ->
+    match_delete(Name, Match, [node()]).
+
+-spec match_delete(atom(), any(), [atom()]) -> ok.
+match_delete(Name, Match, Nodes) ->
+    lists:foreach(
+      fun(Node) when Node /= node() ->
+	      send({Name, Node}, {match_delete, Match});
+	 (_MyNode) ->
+	      ets_match_delete(Name, Match)
       end, Nodes).
 
 -spec insert(atom(), any(), any()) -> boolean().
@@ -296,6 +317,7 @@ info(Name) ->
 		   ({owner, _}) -> true;
 		   ({name, _}) -> true;
 		   ({size, _}) -> true;
+		   ({type, _}) -> true;
 		   (_) -> false
 		end, ETSInfo)]
     end.
@@ -329,7 +351,8 @@ load_nif() ->
 %%%===================================================================
 init([Name, Opts]) ->
     process_flag(trap_exit, true),
-    ets:new(Name, [named_table, public, {read_concurrency, true}]),
+    Type = proplists:get_value(type, Opts, set),
+    ets:new(Name, [named_table, public, {read_concurrency, true}, Type]),
     Counter = new_counter(),
     TRef = start_clean_timer(),
     State = #state{tab = Name, clean_timer = TRef},
@@ -362,6 +385,9 @@ handle_info({incr, Obj}, #state{tab = Tab} = State) ->
     {noreply, State};
 handle_info({delete, Key}, #state{tab = Tab} = State) ->
     ets_delete(Tab, Key),
+    {noreply, State};
+handle_info({match_delete, Match}, #state{tab = Tab} = State) ->
+    ets_match_delete(Tab, Match),
     {noreply, State};
 handle_info(clear, #state{tab = Tab} = State) ->
     ets_delete_all_objects(Tab),
@@ -509,8 +535,15 @@ check_opts(Opts) ->
 		  {life_time, Val} when is_integer(Val), Val>0 -> Opt;
 		  {life_time, infinity} -> Opt;
 		  {cache_missed, Bool} when is_boolean(Bool) -> Opt;
+		  {type, Type} when Type == set;
+				    Type == ordered_set;
+				    Type == bag;
+				    Type == duplicate_bag ->
+		      Opt;
 		  _ -> erlang:error({bad_option, Opt})
-	      end
+	      end;
+	 (cache_missed) -> {cache_missed, true};
+	 (Opt) -> erlang:error({bad_option, Opt})
       end, Opts).
 
 -spec do_setopts(state(), [{counter, counter()} | option()]) -> state().
@@ -590,6 +623,17 @@ ets_delete(Tab, Key) ->
     try
 	incr_counter(Tab),
 	ets:delete(Tab, Key)
+    catch _:badarg ->
+	    false;
+	  _:{badmatch, undefined} ->
+	    false
+    end.
+
+-spec ets_match_delete(atom(), any()) -> boolean().
+ets_match_delete(Tab, Match) ->
+    try
+	incr_counter(Tab),
+	ets:match_delete(Tab, {Match, '_', '_'})
     catch _:badarg ->
 	    false;
 	  _:{badmatch, undefined} ->
