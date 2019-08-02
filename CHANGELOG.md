@@ -1,5 +1,6 @@
 # Version 1.0.20
 
+* Updating p1_utils to version 1.0.16.
 * Make it possible to set type of the ets\_cache
 * Add cache support for grow-only counters
 * Export ets\_cache:tag() type
