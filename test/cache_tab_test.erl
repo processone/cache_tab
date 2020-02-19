@@ -36,7 +36,7 @@ get_proc_num() ->
     end.
 
 start_test() ->
-    ?assertEqual(ok, application:start(cache_tab)).
+    ?assertMatch({ok, _}, application:ensure_all_started(cache_tab)).
 
 dirty_insert_test() ->
     ?assertEqual(ok, cache_tab:new(test_tbl, [])),
