@@ -1,3 +1,9 @@
+# Version 1.0.22
+
+* Mark p1_utils app as dpendency in .app file
+* Remove usage of statics in c code, which allows for live upgrade of
+  nif component
+
 # Version 1.0.21
 
 * Updating p1_utils to version 1.0.17.
