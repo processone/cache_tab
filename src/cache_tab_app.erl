@@ -32,6 +32,16 @@
 
 -include("ets_cache.hrl").
 
+-ifdef(USE_OLD_PG2).
+pg_create(PoolName) -> pg2:create(PoolName).
+pg_join(PoolName, Pid) -> pg2:join(PoolName, Pid).
+pg_get_members(Name) -> pg2:get_members(Name).
+-else.
+pg_create(_) -> pg:start_link().
+pg_join(PoolName, Pid) -> pg:join(PoolName, Pid).
+pg_get_members(Group) -> pg:get_members(Group).
+-endif.
+
 %%%===================================================================
 %%% Application callbacks
 %%%===================================================================
@@ -55,8 +65,8 @@
 start(_StartType, _StartArgs) ->
     case cache_tab_sup:start_link() of
         {ok, Pid} ->
-            pg2:create(?PG),
-            pg2:join(?PG, Pid),
+            pg_create(?PG),
+            pg_join(?PG, Pid),
 	    application:start(p1_utils),
 	    init_ets_cache_options(),
             {ok, Pid};
@@ -78,7 +88,7 @@ stop(_State) ->
     ok.
 
 get_nodes() ->
-    [node(P) || P <- pg2:get_members(?PG)].
+    [node(P) || P <- pg_get_members(?PG)].
 
 %%%===================================================================
 %%% Internal functions
