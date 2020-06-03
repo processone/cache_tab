@@ -1,3 +1,7 @@
+# Version 1.0.23
+
+* Fix compatibility issues with Erlang 23
+
 # Version 1.0.22
 
 * Updating p1_utils to version 1.0.18.
