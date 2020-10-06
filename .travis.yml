@@ -18,7 +18,6 @@ install:
 script: rebar compile xref && rebar skip_deps=true eunit
 
 otp_release:
-  - 19.3
   - 22.3
   - 23.0
 
