@@ -1,5 +1,6 @@
 # Version 1.0.26
 
+* Updating p1_utils to version 1.0.21.
 * Update travis config
 
 # Version 1.0.25
