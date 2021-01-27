@@ -1,3 +1,7 @@
+# Version 1.0.27
+
+* Allow to specify custom timeouts in lookup callbacks
+
 # Version 1.0.26
 
 * Updating p1_utils to version 1.0.21.
