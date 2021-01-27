@@ -168,10 +168,20 @@ lookup(Name, Key, Return) ->
 		     error -> {cache, error};
 		     {error, notfound} -> {cache, error};
 		     {cache, _} = Ret -> Ret;
+		     {cache_with_timeout, _, _} = Ret -> Ret;
 		     {nocache, _} = Ret -> Ret;
 		     Other -> {nocache, Other}
 		 end of
 		{nocache, Val} ->
+		    Val;
+		{cache_with_timeout, Val, Timeout} ->
+		    case get_counter(Name) of
+			Ver ->
+			    Time = calculate_time(Name, Timeout),
+			    do_insert(new, Name, {Key, Val, Time});
+			_ ->
+			    ok
+		    end,
 		    Val;
 		{cache, Val} ->
 		    case get_counter(Name) of
@@ -567,6 +577,16 @@ do_setopts(State, Opts) ->
 	    p1_options:compile(ets_cache_options)
     end,
     NewState.
+
+-spec calculate_time(binary(), integer()) -> integer().
+calculate_time(Name, Timeout) ->
+    Now = current_time(),
+    case ets_cache_options:life_time(Name) of
+	{ok, infinity} ->
+	    Now;
+	{ok, LifeTime} ->
+	    Now - LifeTime + Timeout
+    end.
 
 -spec current_time() -> integer().
 current_time() ->
