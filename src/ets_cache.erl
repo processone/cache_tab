@@ -578,7 +578,7 @@ do_setopts(State, Opts) ->
     end,
     NewState.
 
--spec calculate_time(binary(), integer()) -> integer().
+-spec calculate_time(atom(), integer()) -> integer().
 calculate_time(Name, Timeout) ->
     Now = current_time(),
     case ets_cache_options:life_time(Name) of
@@ -682,7 +682,7 @@ ets_delete_all_objects(Tab) ->
 	    false
     end.
 
--spec ets_select_delete(atom(), fun()) -> non_neg_integer().
+-spec ets_select_delete(atom(), ets:match_spec()) -> non_neg_integer().
 ets_select_delete(Tab, Fun) ->
     try
 	incr_counter(Tab),
