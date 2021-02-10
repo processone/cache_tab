@@ -71,6 +71,14 @@
 -type state() :: #state{}.
 -export_type([tag/0]).
 
+-dialyzer({no_match, [handle_info/2, check_size/2, insert/5, do_insert/5,
+                      do_filter/6, do_fold/6, delete_if_expired/4,
+                      delete_if_expired/2]}).
+-dialyzer({no_return, terminate/2}).
+-dialyzer({no_unused, calculate_time/2}).
+-dialyzer({[no_match, no_return], [delete_counter/1, get_counter/1,
+                                   incr_counter/1]}).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
