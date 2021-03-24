@@ -1,3 +1,9 @@
+# Version 1.0.28
+
+* Updating p1_utils to version 1.0.22.
+* Instruct Dialyzer to discard some warnings
+* Fix a pair of type specifications detected by Dialyzer
+
 # Version 1.0.27
 
 * Allow to specify custom timeouts in lookup callbacks
