@@ -41,8 +41,12 @@
 	 new_counter_nif/0, get_counter_nif/1, incr_counter_nif/1,
 	 delete_counter_nif/1]).
 
+-ifdef(GITHUB_ACTIONS).
+-export([load_nif/0]).
+-else.
 -compile(no_native).
 -on_load(load_nif/0).
+-endif.
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
