@@ -1,6 +1,8 @@
 # In-memory cache application for Erlang / Elixir apps
 
-[![Build Status](https://travis-ci.org/processone/cache_tab.svg?branch=master)](https://travis-ci.org/processone/cache_tab) [![Coverage Status](https://coveralls.io/repos/processone/cache_tab/badge.svg?branch=master&service=github)](https://coveralls.io/github/processone/cache_tab?branch=master) [![Hex version](https://img.shields.io/hexpm/v/cache_tab.svg "Hex version")](https://hex.pm/packages/cache_tab)
+[![CI](https://github.com/processone/cache_tab/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/processone/cache_tab/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/processone/cache_tab/badge.svg?branch=master&service=github)](https://coveralls.io/github/processone/cache_tab?branch=master)
+[![Hex version](https://img.shields.io/hexpm/v/cache_tab.svg "Hex version")](https://hex.pm/packages/cache_tab)
 
 `cache_tab` application is intended to proxy back-end operations for
 Key-Value insert, lookup and delete and maintain a cache of those
