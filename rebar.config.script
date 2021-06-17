@@ -118,12 +118,10 @@ Rules = [
 			     {compile, {pc, compile}},
 			     {clean, {pc, clean}}
 			    ]}]), []},
-	 {[plugins], IsRebar3 and (os:getenv("GITHUB_ACTIONS") == "true"),
+	 {[plugins], os:getenv("COVERALLS") == "true",
 	  AppendList([{coveralls, {git,
 	                           "https://github.com/RoadRunnr/coveralls-erl.git",
 	                           {branch, "feature/git-info"}}} ]), []},
-	 {[erl_opts], IsRebar3 and (os:getenv("GITHUB_ACTIONS") == "true"),
-	  AppendList([{d, 'GITHUB_ACTIONS'}]), []},
 	 {[deps], os:getenv("USE_GLOBAL_DEPS") /= false,
 	  GlobalDepsFilter, []}
 	],

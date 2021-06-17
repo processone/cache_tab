@@ -41,12 +41,8 @@
 	 new_counter_nif/0, get_counter_nif/1, incr_counter_nif/1,
 	 delete_counter_nif/1]).
 
--ifdef(GITHUB_ACTIONS).
--export([load_nif/0]).
--else.
 -compile(no_native).
 -on_load(load_nif/0).
--endif.
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
@@ -358,6 +354,11 @@ untag({nocache, Val}) -> Val;
 untag(Val) -> Val.
 
 load_nif() ->
+    case os:getenv("COVERALLS") of
+        "true" -> ok;
+        _ -> load_nif2()
+    end.
+load_nif2() ->
     Path = p1_nif_utils:get_so_path(?MODULE, [?MODULE], atom_to_list(?MODULE)),
     MaxTables = get_max_tables(),
     case erlang:load_nif(Path, MaxTables) of
