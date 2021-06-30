@@ -20,6 +20,18 @@
 %%%
 %%%----------------------------------------------------------------------
 
+Cfg = case file:consult(filename:join([filename:dirname(SCRIPT),"vars.config"])) of
+          {ok, Terms} ->
+              Terms;
+          _Err ->
+              []
+      end ++ [{cflags, "-g -O2 -Wall"},
+	      {ldflags, "-lpthread"},
+	      {with_gcov, "false"}],
+{cflags, CfgCFlags} = lists:keyfind(cflags, 1, Cfg),
+{ldflags, CfgLDFlags} = lists:keyfind(ldflags, 1, Cfg),
+{with_gcov, CfgWithGCov} = lists:keyfind(with_gcov, 1, Cfg),
+
 IsRebar3 = case application:get_key(rebar, vsn) of
 	       {ok, VSN} ->
 		   [VSN1 | _] = string:tokens(VSN, "-"),
@@ -109,10 +121,20 @@ GithubConfig = case {os:getenv("GITHUB_ACTIONS"), os:getenv("GITHUB_TOKEN")} of
 end,
 
 Rules = [
+	 {[post_hooks], (not IsRebar3) and (CfgWithGCov == "true"),
+	  AppendList([{eunit, "gcov -o c_src ets_cache"},
+		      {eunit, "mv *.gcov .eunit/"}]), []},
+	 {[post_hooks], IsRebar3 and (CfgWithGCov == "true"),
+	  AppendList([{eunit, "gcov -o c_src ets_cache"},
+		      {eunit, "mv *.gcov _build/test/cover/"}]), []},
+	 {[port_env, "LDFLAGS"], CfgWithGCov == "true",
+	  AppendStr("--coverage"), ""},
+	 {[port_env, "CFLAGS"], CfgWithGCov == "true",
+	  AppendStr("--coverage"), ""},
 	 {[deps], IsRebar3,
 	  Rebar3DepsFilter, []},
 	 {[plugins], IsRebar3,
-	  AppendList([rebar3_hex, pc]), []},
+	  AppendList([pc]), []},
 	 {[provider_hooks], IsRebar3,
 	  AppendList([{pre, [
 			     {compile, {pc, compile}},
@@ -120,8 +142,8 @@ Rules = [
 			    ]}]), []},
 	 {[plugins], os:getenv("COVERALLS") == "true",
 	  AppendList([{coveralls, {git,
-	                           "https://github.com/RoadRunnr/coveralls-erl.git",
-	                           {branch, "feature/git-info"}}} ]), []},
+	                           "https://github.com/processone/coveralls-erl.git",
+	                           {branch, "addjsonfile"}}} ]), []},
 	 {[deps], os:getenv("USE_GLOBAL_DEPS") /= false,
 	  GlobalDepsFilter, []}
 	],
