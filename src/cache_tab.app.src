@@ -23,7 +23,7 @@
 
 {application, cache_tab,
  [{description,  "In-memory cache Erlang / Elixir library"},
-  {vsn,          "1.0.30"},
+  {vsn,          "1.0.31"},
   {modules,      []},
   {registered,   []},
   {applications, [kernel, stdlib, p1_utils]},
