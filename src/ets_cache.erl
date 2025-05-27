@@ -76,7 +76,7 @@
                       delete_if_expired/2]}).
 -dialyzer({no_return, terminate/2}).
 -dialyzer({no_unused, calculate_time/2}).
--dialyzer({[no_match, no_return], [delete_counter/1, get_counter/1,
+-dialyzer({[no_contracts, no_match, no_return], [delete_counter/1, get_counter/1,
                                    incr_counter/1]}).
 
 %%%===================================================================
