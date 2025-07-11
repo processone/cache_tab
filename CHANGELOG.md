@@ -1,5 +1,6 @@
 # Version 1.0.33
 
+* Updating p1_utils to version 1.0.28.
 * Fix warnings reported by dialyzer
 
 # Version 1.0.32
