@@ -28,10 +28,11 @@
 -include_lib("eunit/include/eunit.hrl").
 
 get_proc_num() ->
-    case catch erlang:system_info(logical_processors) of
+    try erlang:system_info(logical_processors) of
         Num when is_integer(Num) ->
-            Num;
-        _ ->
+            Num
+    catch
+        _:_ ->
             1
     end.
 

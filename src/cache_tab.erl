@@ -234,14 +234,11 @@ handle_call({lookup, Key, F}, _From, #state{tab = T} = State) ->
 		    {reply, {ok, Val}, NewState}
 	    end;
 	_ ->
-	    case catch F() of
+	    try F() of
 		{ok, Val} ->
 		    Miss = State#state.miss,
 		    NewState = treap_insert(Key, Val, State),
 		    {reply, {ok, Val}, NewState#state{miss = Miss + 1}};
-		{'EXIT', Reason} ->
-		    print_error(lookup, [Key], Reason, State),
-		    {reply, error, State};
 		_ ->
 		    Miss = State#state.miss,
 		    NewState = State#state{miss = Miss + 1},
@@ -251,6 +248,10 @@ handle_call({lookup, Key, F}, _From, #state{tab = T} = State) ->
 		       true ->
 			    {reply, error, NewState}
 		    end
+            catch
+		_:Reason ->
+		    print_error(lookup, [Key], Reason, State),
+		    {reply, error, State}
 	    end
     end;
 handle_call({cache_lookup, Key}, _From, #state{tab = T} = State) ->
@@ -270,12 +271,12 @@ handle_call({insert, Key, Val, F}, _From, #state{tab = T} = State) ->
 	{ok, _Prio, Val} ->
 	    {reply, ok, treap_update(Key, Val, State)};
 	_ ->
-	    case catch F() of
-		{'EXIT', Reason} ->
+	    try F(),
+                {reply, ok, treap_insert(Key, Val, State)}
+            catch
+		_:Reason ->
 		    print_error(insert, [Key, Val], Reason, State),
-		    {reply, ok, State};
-		_ ->
-		    {reply, ok, treap_insert(Key, Val, State)}
+		    {reply, ok, State}
 	    end
     end;
 handle_call({cache_insert, _, '$cached_mismatch'}, _From,
@@ -285,11 +286,10 @@ handle_call({cache_insert, Key, Val}, _From, State) ->
     {reply, ok, treap_insert(Key, Val, State)};
 handle_call({delete, Key, F}, _From, State) ->
     NewState = treap_delete(Key, State),
-    case catch F() of
-	{'EXIT', Reason} ->
-	    print_error(delete, [Key], Reason, State);
-	_ ->
-	    ok
+    try F()
+    catch
+	_:Reason ->
+	    print_error(delete, [Key], Reason, State)
     end,
     {reply, ok, NewState};
 handle_call({cache_delete, Key}, _From, State) ->
@@ -414,11 +414,12 @@ do_setopts(#state{procs_num = N} = State, Opts) ->
 		shrink_size = ShrinkSize}.
 
 get_proc_num() ->
-    case catch erlang:system_info(logical_processors) of
+    try erlang:system_info(logical_processors) of
         Num when is_integer(Num) ->
             Num;
         _ ->
             1
+    catch _:_ -> 1
     end.
 
 get_proc_by_hash(Tab, Term) ->
