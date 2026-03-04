@@ -413,6 +413,9 @@ do_setopts(#state{procs_num = N} = State, Opts) ->
 		lru = LRU,
 		shrink_size = ShrinkSize}.
 
+%% Only required in Erlang/OTP 26 and older:
+-dialyzer({no_match, {get_proc_num, 0}}).
+
 get_proc_num() ->
     try erlang:system_info(logical_processors) of
         Num when is_integer(Num) ->
