@@ -55,7 +55,7 @@ pg_get_members(Group) -> pg:get_members(Group).
 %% design principles as a supervision tree, this means starting the
 %% top supervisor of the tree.
 %%
-%% @spec start(StartType, StartArgs) -> {ok, Pid} |
+%%  spec start(StartType, StartArgs) -> {ok, Pid} |
 %%                                      {ok, Pid, State} |
 %%                                      {error, Reason}
 %%      StartType = normal | {takeover, Node} | {failover, Node}
@@ -81,7 +81,7 @@ start(_StartType, _StartArgs) ->
 %% is intended to be the opposite of Module:start/2 and should do
 %% any necessary cleaning up. The return value is ignored.
 %%
-%% @spec stop(State) -> void()
+%%  spec stop(State) -> void()
 %% @end
 %%--------------------------------------------------------------------
 stop(_State) ->
