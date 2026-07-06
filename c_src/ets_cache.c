@@ -28,7 +28,6 @@
 
 typedef struct State {
   unsigned int max_counters;
-  unsigned int counters_num;
   ErlNifUInt64 *counters;
   ErlNifMutex *counters_lock;
 } State;
@@ -48,7 +47,7 @@ static int load(ErlNifEnv* env, void** priv, ERL_NIF_TERM max)
     size = sizeof(ErlNifUInt64) * max_counters;
     if ((state->counters = enif_alloc(size))) {
       memset(state->counters, -1, size);
-      state->counters_num = 0;
+      state->max_counters = max_counters;
       state->counters_lock = enif_mutex_create("counters_lock");
       *priv = state;
       return 0;
@@ -91,26 +90,18 @@ static ERL_NIF_TERM new_counter(ErlNifEnv* env, int argc,
   State *state = (State*)enif_priv_data(env);
   enif_mutex_lock(state->counters_lock);
 
-  if (state->counters_num < state->max_counters) {
-    counter = state->counters_num++;
-    state->counters[counter] = 0;
-    enif_mutex_unlock(state->counters_lock);
-    return enif_make_tuple2(env, enif_make_atom(env, "ok"),
-			    enif_make_ulong(env, counter));
-  } else {
-    for (counter = 0; counter < state->max_counters; counter++) {
-      if (state->counters[counter] == MAX_UINT64) {
-        state->counters[counter] = 0;
-        enif_mutex_unlock(state->counters_lock);
-        return enif_make_tuple2(env, enif_make_atom(env, "ok"),
-				enif_make_ulong(env, counter));
-      }
+  for (counter = 0; counter < state->max_counters; counter++) {
+    if (state->counters[counter] == MAX_UINT64) {
+      state->counters[counter] = 0;
+      enif_mutex_unlock(state->counters_lock);
+      return enif_make_tuple2(env, enif_make_atom(env, "ok"),
+			      enif_make_ulong(env, counter));
     }
-    enif_mutex_unlock(state->counters_lock);
-    return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                            enif_make_tuple2(env, enif_make_atom(env, "system_limit"),
-                                             enif_make_uint(env, state->max_counters)));
   }
+  enif_mutex_unlock(state->counters_lock);
+  return enif_make_tuple2(env, enif_make_atom(env, "error"),
+                          enif_make_tuple2(env, enif_make_atom(env, "system_limit"),
+                                           enif_make_uint(env, state->max_counters)));
 }
 
 static ERL_NIF_TERM delete_counter(ErlNifEnv* env, int argc,
